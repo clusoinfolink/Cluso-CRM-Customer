@@ -1,4 +1,5 @@
 import { InferSchemaType, Model, Schema, models, model } from "mongoose";
+import { SUPPORTED_CURRENCIES } from "@/lib/currencies";
 
 const UserSchema = new Schema(
   {
@@ -7,10 +8,15 @@ const UserSchema = new Schema(
     passwordHash: { type: String, required: true },
     role: {
       type: String,
-      enum: ["superadmin", "admin", "customer", "delegate"],
+      enum: ["superadmin", "admin", "customer", "delegate", "delegate_user"],
       required: true,
     },
     parentCustomer: {
+      type: Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
+    },
+    createdByDelegate: {
       type: Schema.Types.ObjectId,
       ref: "User",
       default: null,
@@ -24,7 +30,7 @@ const UserSchema = new Schema(
         },
         serviceName: { type: String, required: true },
         price: { type: Number, required: true },
-        currency: { type: String, enum: ["INR", "USD"], default: "INR" },
+        currency: { type: String, enum: SUPPORTED_CURRENCIES, default: "INR" },
       },
     ],
   },
@@ -33,7 +39,17 @@ const UserSchema = new Schema(
 
 export type UserDocument = InferSchemaType<typeof UserSchema> & { _id: string };
 
-if (models.User && !models.User.schema.path("selectedServices")) {
+const existingUserRoleValues = models.User?.schema.path("role")?.options?.enum;
+const hasDelegateUserRole =
+  Array.isArray(existingUserRoleValues) && existingUserRoleValues.includes("delegate_user");
+const hasCreatedByDelegatePath = Boolean(models.User?.schema.path("createdByDelegate"));
+
+if (
+  models.User &&
+  (!models.User.schema.path("selectedServices") ||
+    !hasDelegateUserRole ||
+    !hasCreatedByDelegatePath)
+) {
   delete models.User;
 }
 

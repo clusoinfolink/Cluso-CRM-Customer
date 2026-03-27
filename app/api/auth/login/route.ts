@@ -21,7 +21,10 @@ export async function POST(req: Request) {
   await connectMongo();
 
   const user = await User.findOne({ email: parsed.data.email.toLowerCase() }).lean();
-  if (!user || (user.role !== "customer" && user.role !== "delegate")) {
+  if (
+    !user ||
+    (user.role !== "customer" && user.role !== "delegate" && user.role !== "delegate_user")
+  ) {
     return NextResponse.json({ error: "Invalid credentials." }, { status: 401 });
   }
 

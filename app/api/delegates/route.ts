@@ -12,33 +12,60 @@ const schema = z.object({
 });
 
 export async function POST(req: NextRequest) {
-  const auth = await getCustomerAuthFromRequest(req);
-  if (!auth || auth.role !== "customer") {
-    return NextResponse.json({ error: "Only company account can create delegates." }, { status: 403 });
+  try {
+    const auth = await getCustomerAuthFromRequest(req);
+    if (!auth || (auth.role !== "customer" && auth.role !== "delegate")) {
+      return NextResponse.json(
+        { error: "Only company account or delegate can create users." },
+        { status: 403 },
+      );
+    }
+
+    const body = await req.json();
+    const parsed = schema.safeParse(body);
+    if (!parsed.success) {
+      return NextResponse.json({ error: "Invalid input." }, { status: 400 });
+    }
+
+    await connectMongo();
+
+    const email = parsed.data.email.toLowerCase();
+    const existing = await User.findOne({ email }).lean();
+    if (existing) {
+      return NextResponse.json({ error: "Email already exists." }, { status: 409 });
+    }
+
+    const passwordHash = await bcrypt.hash(parsed.data.password, 10);
+
+    const companyId = auth.role === "customer" ? auth.userId : auth.parentCustomerId;
+    if (!companyId) {
+      return NextResponse.json({ error: "Invalid account mapping." }, { status: 400 });
+    }
+
+    const roleToCreate = auth.role === "customer" ? "delegate" : "delegate_user";
+
+    await User.create({
+      name: parsed.data.name,
+      email,
+      passwordHash,
+      role: roleToCreate,
+      parentCustomer: companyId,
+      createdByDelegate: auth.role === "delegate" ? auth.userId : null,
+    });
+
+    return NextResponse.json(
+      {
+        message:
+          roleToCreate === "delegate"
+            ? "Delegate created successfully."
+            : "User created successfully.",
+      },
+      { status: 201 },
+    );
+  } catch {
+    return NextResponse.json(
+      { error: "Could not create user due to a server error." },
+      { status: 500 },
+    );
   }
-
-  const body = await req.json();
-  const parsed = schema.safeParse(body);
-  if (!parsed.success) {
-    return NextResponse.json({ error: "Invalid input." }, { status: 400 });
-  }
-
-  await connectMongo();
-
-  const email = parsed.data.email.toLowerCase();
-  const existing = await User.findOne({ email }).lean();
-  if (existing) {
-    return NextResponse.json({ error: "Email already exists." }, { status: 409 });
-  }
-
-  const passwordHash = await bcrypt.hash(parsed.data.password, 10);
-  await User.create({
-    name: parsed.data.name,
-    email,
-    passwordHash,
-    role: "delegate",
-    parentCustomer: auth.userId,
-  });
-
-  return NextResponse.json({ message: "Delegate created successfully." }, { status: 201 });
 }

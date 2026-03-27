@@ -1,4 +1,5 @@
 import { InferSchemaType, Model, Schema, models, model } from "mongoose";
+import { SUPPORTED_CURRENCIES } from "@/lib/currencies";
 
 const VerificationRequestSchema = new Schema(
   {
@@ -30,7 +31,7 @@ const VerificationRequestSchema = new Schema(
         },
         serviceName: { type: String, required: true },
         price: { type: Number, required: true },
-        currency: { type: String, enum: ["INR", "USD"], default: "INR" },
+        currency: { type: String, enum: SUPPORTED_CURRENCIES, default: "INR" },
       },
     ],
   },

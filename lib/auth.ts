@@ -6,7 +6,7 @@ const TOKEN_NAME = "cluso_customer_token";
 
 type AuthPayload = {
   userId: string;
-  role: "customer" | "delegate";
+  role: "customer" | "delegate" | "delegate_user";
   parentCustomerId: string | null;
 };
 

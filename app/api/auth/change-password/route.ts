@@ -12,7 +12,10 @@ const schema = z.object({
 
 export async function POST(req: NextRequest) {
   const auth = await getCustomerAuthFromRequest(req);
-  if (!auth || (auth.role !== "customer" && auth.role !== "delegate")) {
+  if (
+    !auth ||
+    (auth.role !== "customer" && auth.role !== "delegate" && auth.role !== "delegate_user")
+  ) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
@@ -32,7 +35,10 @@ export async function POST(req: NextRequest) {
   await connectMongo();
 
   const user = await User.findById(auth.userId);
-  if (!user || (user.role !== "customer" && user.role !== "delegate")) {
+  if (
+    !user ||
+    (user.role !== "customer" && user.role !== "delegate" && user.role !== "delegate_user")
+  ) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
