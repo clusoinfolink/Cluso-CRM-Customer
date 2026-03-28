@@ -2,11 +2,28 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { ArrowRight, ClipboardPlus, ListChecks, ShieldAlert, UserPlus } from "lucide-react";
+import {
+  ArrowRight,
+  BadgeCheck,
+  ClipboardPlus,
+  Layers3,
+  ListChecks,
+  ShieldAlert,
+  TriangleAlert,
+  UserPlus,
+  type LucideIcon,
+} from "lucide-react";
 import { PortalFrame } from "@/components/dashboard/PortalFrame";
 import { BlockCard, BlockTitle } from "@/components/ui/blocks";
 import { usePortalSession } from "@/lib/hooks/usePortalSession";
 import { useRequestsData } from "@/lib/hooks/useRequestsData";
+
+type CountCard = {
+  label: string;
+  value: number;
+  tone: string;
+  icon: LucideIcon;
+};
 
 export default function DashboardOverviewPage() {
   const { me, loading, logout } = usePortalSession();
@@ -21,7 +38,7 @@ export default function DashboardOverviewPage() {
     let active = true;
 
     (async () => {
-      await refreshRequests();
+      await refreshRequests(false);
       if (active) {
         setRequestsReady(true);
       }
@@ -45,6 +62,12 @@ export default function DashboardOverviewPage() {
   const pendingCount = items.filter((item) => item.status === "pending").length;
   const approvedCount = items.filter((item) => item.status === "approved").length;
   const rejectedCount = items.filter((item) => item.status === "rejected").length;
+  const cards: CountCard[] = [
+    { label: "Pending", value: pendingCount, tone: "portal-stat-sky", icon: ClipboardPlus },
+    { label: "Approved", value: approvedCount, tone: "portal-stat-emerald", icon: BadgeCheck },
+    { label: "Rejected", value: rejectedCount, tone: "portal-stat-rose", icon: TriangleAlert },
+    { label: "Total", value: items.length, tone: "portal-stat-violet", icon: Layers3 },
+  ];
   const recentItems = [...items]
     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
     .slice(0, 5);
@@ -63,22 +86,20 @@ export default function DashboardOverviewPage() {
       ) : null}
 
       <section className="portal-stats-grid" aria-label="Request overview">
-        <article className="portal-stat">
-          <p className="portal-stat-label">Pending</p>
-          <p className="portal-stat-value">{pendingCount}</p>
-        </article>
-        <article className="portal-stat">
-          <p className="portal-stat-label">Approved</p>
-          <p className="portal-stat-value">{approvedCount}</p>
-        </article>
-        <article className="portal-stat">
-          <p className="portal-stat-label">Rejected</p>
-          <p className="portal-stat-value">{rejectedCount}</p>
-        </article>
-        <article className="portal-stat">
-          <p className="portal-stat-label">Total</p>
-          <p className="portal-stat-value">{items.length}</p>
-        </article>
+        {cards.map((card) => {
+          const Icon = card.icon;
+          return (
+            <article key={card.label} className={`portal-stat ${card.tone}`}>
+              <div className="portal-stat-head">
+                <p className="portal-stat-value">{card.value}</p>
+                <span className="portal-stat-icon" aria-hidden="true">
+                  <Icon size={18} />
+                </span>
+              </div>
+              <p className="portal-stat-label">{card.label}</p>
+            </article>
+          );
+        })}
       </section>
 
       <section className="quick-actions-grid" aria-label="Quick actions">

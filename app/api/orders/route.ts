@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
+import bcrypt from "bcryptjs";
+import crypto from "node:crypto";
 import { z } from "zod";
 import { getCustomerAuthFromRequest } from "@/lib/auth";
 import { connectMongo } from "@/lib/mongodb";
@@ -40,6 +42,36 @@ async function getCompanyServices(companyId: string) {
     price: item.price,
     currency: item.currency,
   }));
+}
+
+async function ensureCandidateUser(candidateEmail: string, candidateName: string) {
+  const normalizedEmail = candidateEmail.toLowerCase();
+  const existing = await User.findOne({ email: normalizedEmail }).select("_id role").lean();
+
+  if (existing) {
+    return {
+      candidateUserId: existing.role === "candidate" ? String(existing._id) : null,
+      created: false,
+      tempPassword: null as string | null,
+      blockedByRole: existing.role !== "candidate",
+    };
+  }
+
+  const tempPassword = `Cluso${crypto.randomBytes(4).toString("hex")}`;
+  const passwordHash = await bcrypt.hash(tempPassword, 10);
+  const createdUser = await User.create({
+    name: candidateName,
+    email: normalizedEmail,
+    passwordHash,
+    role: "candidate",
+  });
+
+  return {
+    candidateUserId: String(createdUser._id),
+    created: true,
+    tempPassword,
+    blockedByRole: false,
+  };
 }
 
 export async function GET(req: NextRequest) {
@@ -177,18 +209,41 @@ export async function POST(req: NextRequest) {
     parsed.data.selectedServiceIds.includes(item.serviceId),
   );
 
+  const candidateAccount = await ensureCandidateUser(
+    parsed.data.candidateEmail,
+    parsed.data.candidateName,
+  );
+
   await VerificationRequest.create({
     candidateName: parsed.data.candidateName,
-    candidateEmail: parsed.data.candidateEmail,
+    candidateEmail: parsed.data.candidateEmail.toLowerCase(),
     candidatePhone: parsed.data.candidatePhone || "",
     customer: companyId,
     createdBy: auth.userId,
+    candidateUser: candidateAccount.candidateUserId,
     status: "pending",
+    candidateFormStatus: "pending",
+    candidateSubmittedAt: null,
+    candidateFormResponses: [],
     selectedServices,
   });
 
+  const messageParts = [
+    "Order created. Candidate will appear in admin queue after form submission.",
+  ];
+
+  if (candidateAccount.created && candidateAccount.tempPassword) {
+    messageParts.push(
+      `New candidate account created. Temporary password: ${candidateAccount.tempPassword}`,
+    );
+  } else if (candidateAccount.blockedByRole) {
+    messageParts.push(
+      "An account with this email already exists with a non-candidate role, so candidate login is not enabled for this email.",
+    );
+  }
+
   return NextResponse.json(
-    { message: "Request sent to admin for approval." },
+    { message: messageParts.join(" ") },
     { status: 201 },
   );
 }
@@ -237,6 +292,11 @@ export async function PATCH(req: NextRequest) {
     parsed.data.selectedServiceIds.includes(item.serviceId),
   );
 
+  const candidateAccount = await ensureCandidateUser(
+    parsed.data.candidateEmail,
+    parsed.data.candidateName,
+  );
+
   const existingFilter: { _id: string; customer: string; createdBy?: string } = {
     _id: parsed.data.requestId,
     customer: companyId,
@@ -260,12 +320,27 @@ export async function PATCH(req: NextRequest) {
 
   await VerificationRequest.findByIdAndUpdate(parsed.data.requestId, {
     candidateName: parsed.data.candidateName,
-    candidateEmail: parsed.data.candidateEmail,
+    candidateEmail: parsed.data.candidateEmail.toLowerCase(),
     candidatePhone: parsed.data.candidatePhone || "",
+    candidateUser: candidateAccount.candidateUserId,
     selectedServices,
     status: "pending",
+    candidateFormStatus: "pending",
+    candidateSubmittedAt: null,
+    candidateFormResponses: [],
     rejectionNote: "",
   });
 
-  return NextResponse.json({ message: "Request updated and resubmitted for approval." });
+  const messageParts = ["Request updated. Candidate must refill the form before admin review."];
+  if (candidateAccount.created && candidateAccount.tempPassword) {
+    messageParts.push(
+      `New candidate account created. Temporary password: ${candidateAccount.tempPassword}`,
+    );
+  } else if (candidateAccount.blockedByRole) {
+    messageParts.push(
+      "Candidate login was not enabled because this email is already assigned to another user role.",
+    );
+  }
+
+  return NextResponse.json({ message: messageParts.join(" ") });
 }

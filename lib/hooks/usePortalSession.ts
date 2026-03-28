@@ -1,40 +1,58 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import { MeResponse, PortalUser } from "@/lib/types";
 
+const SESSION_QUERY_KEY = ["customer-portal-session"];
+const SESSION_STALE_TIME_MS = 5 * 60 * 1000;
+
+async function fetchPortalSession() {
+  const response = await fetch("/api/auth/me", { cache: "no-store" });
+
+  if (!response.ok) {
+    throw new Error("Unauthorized");
+  }
+
+  const data = (await response.json()) as MeResponse;
+  return data.user;
+}
+
 export function usePortalSession() {
   const router = useRouter();
-  const [me, setMe] = useState<PortalUser | null>(null);
-  const [loading, setLoading] = useState(true);
+  const queryClient = useQueryClient();
 
-  async function refreshMe() {
-    const response = await fetch("/api/auth/me", { cache: "no-store" });
+  const sessionQuery = useQuery<PortalUser>({
+    queryKey: SESSION_QUERY_KEY,
+    queryFn: fetchPortalSession,
+    staleTime: SESSION_STALE_TIME_MS,
+    retry: false,
+  });
 
-    if (!response.ok) {
+  const refreshMe = useCallback(async (force = true) => {
+    await queryClient.fetchQuery({
+      queryKey: SESSION_QUERY_KEY,
+      queryFn: fetchPortalSession,
+      staleTime: force ? 0 : SESSION_STALE_TIME_MS,
+    });
+  }, [queryClient]);
+
+  useEffect(() => {
+    if (sessionQuery.isError) {
       router.push("/");
-      return;
     }
-
-    const data = (await response.json()) as MeResponse;
-    setMe(data.user);
-    setLoading(false);
-  }
+  }, [router, sessionQuery.isError]);
 
   async function logout() {
     await fetch("/api/auth/logout", { method: "POST" });
+    queryClient.removeQueries({ queryKey: SESSION_QUERY_KEY });
     router.push("/");
   }
 
-  useEffect(() => {
-    refreshMe();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
   return {
-    me,
-    loading,
+    me: sessionQuery.data ?? null,
+    loading: sessionQuery.isLoading,
     refreshMe,
     logout,
   };
