@@ -61,6 +61,17 @@ type EmailResult = {
   reason?: string;
 };
 
+function resolveCandidatePortalUrl() {
+  const configuredUrl = process.env.CANDIDATE_PORTAL_URL?.trim();
+  if (configuredUrl) {
+    return configuredUrl;
+  }
+
+  return process.env.NODE_ENV === "production"
+    ? "https://cluso-candidates.vercel.app"
+    : "http://localhost:3012";
+}
+
 async function sendVerificationRequestEmail(payload: VerificationEmailPayload): Promise<EmailResult> {
   const smtpHost = process.env.SMTP_HOST?.trim();
   const smtpPort = Number(process.env.SMTP_PORT ?? "587");
@@ -377,7 +388,7 @@ export async function POST(req: NextRequest) {
     selectedServices,
   });
 
-  const portalUrl = process.env.CANDIDATE_PORTAL_URL?.trim() || "http://localhost:3012";
+  const portalUrl = resolveCandidatePortalUrl();
   const emailResult = await sendVerificationRequestEmail({
     recipientName: parsed.data.candidateName,
     recipientEmail: parsed.data.candidateEmail.toLowerCase(),
@@ -499,7 +510,7 @@ export async function PATCH(req: NextRequest) {
     rejectionNote: "",
   });
 
-  const portalUrl = process.env.CANDIDATE_PORTAL_URL?.trim() || "http://localhost:3012";
+  const portalUrl = resolveCandidatePortalUrl();
   const emailResult = await sendVerificationRequestEmail({
     recipientName: parsed.data.candidateName,
     recipientEmail: parsed.data.candidateEmail.toLowerCase(),
