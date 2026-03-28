@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import crypto from "node:crypto";
+import nodemailer from "nodemailer";
 import { z } from "zod";
 import { getCustomerAuthFromRequest } from "@/lib/auth";
 import { connectMongo } from "@/lib/mongodb";
@@ -30,18 +31,164 @@ function companyIdFromAuth(auth: {
   return auth.role === "customer" ? auth.userId : auth.parentCustomerId;
 }
 
-async function getCompanyServices(companyId: string) {
+async function getCompanyProfile(companyId: string) {
   const company = await User.findById(companyId).lean();
   if (!company || company.role !== "customer") {
     return null;
   }
 
-  return (company.selectedServices ?? []).map((item) => ({
-    serviceId: String(item.serviceId),
-    serviceName: item.serviceName,
-    price: item.price,
-    currency: item.currency,
-  }));
+  return {
+    companyName: company.name || "Company",
+    services: (company.selectedServices ?? []).map((item) => ({
+      serviceId: String(item.serviceId),
+      serviceName: item.serviceName,
+      price: item.price,
+      currency: item.currency,
+    })),
+  };
+}
+
+type VerificationEmailPayload = {
+  recipientName: string;
+  recipientEmail: string;
+  companyName: string;
+  portalUrl: string;
+  tempPassword?: string | null;
+};
+
+type EmailResult = {
+  sent: boolean;
+  reason?: string;
+};
+
+async function sendVerificationRequestEmail(payload: VerificationEmailPayload): Promise<EmailResult> {
+  const smtpHost = process.env.SMTP_HOST?.trim();
+  const smtpPort = Number(process.env.SMTP_PORT ?? "587");
+  const smtpUser = process.env.SMTP_USER?.trim();
+  const smtpPass = process.env.SMTP_PASS?.trim();
+  const smtpSecure = process.env.SMTP_SECURE === "true" || smtpPort === 465;
+
+  if (!smtpHost || !smtpUser || !smtpPass || Number.isNaN(smtpPort)) {
+    return {
+      sent: false,
+      reason: "SMTP credentials are not configured.",
+    };
+  }
+
+  const transporter = nodemailer.createTransport({
+    host: smtpHost,
+    port: smtpPort,
+    secure: smtpSecure,
+    auth: {
+      user: smtpUser,
+      pass: smtpPass,
+    },
+  });
+
+  const subject = "Background Verification Request";
+  const fromAddress =
+    process.env.VERIFICATION_MAIL_FROM?.trim() || `Cluso Infolink Team <${smtpUser}>`;
+
+  const loginHint = payload.tempPassword
+    ? `\nYour candidate account was created for this request.\nLogin Email: ${payload.recipientEmail}\nTemporary Password: ${payload.tempPassword}\n`
+    : "";
+
+  const text = [
+    `Dear ${payload.recipientName},`,
+    "",
+    "We hope you are doing well.",
+    "",
+    "We, Cluso Infolink, a background verification firm, have been requested to collect and verify your information to assess the genuineness of your application.",
+    "",
+    `This verification process has been initiated by "${payload.companyName}" as part of their standard screening procedure.`,
+    "",
+    "To proceed, we have provided a secure link to our portal where you can submit your information and upload the required documents:",
+    "",
+    payload.portalUrl,
+    loginHint,
+    "We kindly request your cooperation in completing this process at the earliest. All information shared will be handled with strict confidentiality and used solely for verification purposes.",
+    "",
+    "If you have any questions or require clarification, please feel free to reach out to us.",
+    "",
+    "Thank you for your cooperation.",
+    "",
+    "Best regards,",
+    "Cluso Infolink Team",
+    "Clusosupport@gmail.com",
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  const safeRecipient = payload.recipientName
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+  const safeCompany = payload.companyName
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+  const safePortalUrl = payload.portalUrl
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+
+  const credentialsHtml = payload.tempPassword
+    ? `<p>Your candidate account was created for this request.<br />Login Email: ${payload.recipientEmail}<br />Temporary Password: ${payload.tempPassword}</p>`
+    : "";
+
+  const html = `
+    <p>Dear ${safeRecipient},</p>
+    <p>We hope you are doing well.</p>
+    <p>
+      We, Cluso Infolink, a background verification firm, have been requested to collect and verify your
+      information to assess the genuineness of your application.
+    </p>
+    <p>
+      This verification process has been initiated by "${safeCompany}" as part of their standard screening
+      procedure.
+    </p>
+    <p>
+      To proceed, we have provided a secure link to our portal where you can submit your information and upload
+      the required documents:
+    </p>
+    <p><a href="${safePortalUrl}">${safePortalUrl}</a></p>
+    ${credentialsHtml}
+    <p>
+      We kindly request your cooperation in completing this process at the earliest. All information shared will
+      be handled with strict confidentiality and used solely for verification purposes.
+    </p>
+    <p>
+      If you have any questions or require clarification, please feel free to reach out to us.
+    </p>
+    <p>
+      Thank you for your cooperation.
+    </p>
+    <p>
+      Best regards,<br />
+      Cluso Infolink Team<br />
+      Clusosupport@gmail.com
+    </p>
+  `;
+
+  try {
+    await transporter.sendMail({
+      from: fromAddress,
+      to: payload.recipientEmail,
+      subject,
+      text,
+      html,
+    });
+    return { sent: true };
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : "Unknown email error";
+    return { sent: false, reason };
+  }
 }
 
 async function ensureCandidateUser(candidateEmail: string, candidateName: string) {
@@ -184,10 +331,12 @@ export async function POST(req: NextRequest) {
 
   await connectMongo();
 
-  const companyServices = await getCompanyServices(companyId);
-  if (!companyServices) {
+  const companyProfile = await getCompanyProfile(companyId);
+  if (!companyProfile) {
     return NextResponse.json({ error: "Company account not found." }, { status: 404 });
   }
+
+  const companyServices = companyProfile.services;
 
   if (companyServices.length > 0 && parsed.data.selectedServiceIds.length === 0) {
     return NextResponse.json(
@@ -228,9 +377,26 @@ export async function POST(req: NextRequest) {
     selectedServices,
   });
 
+  const portalUrl = process.env.CANDIDATE_PORTAL_URL?.trim() || "http://localhost:3012";
+  const emailResult = await sendVerificationRequestEmail({
+    recipientName: parsed.data.candidateName,
+    recipientEmail: parsed.data.candidateEmail.toLowerCase(),
+    companyName: companyProfile.companyName,
+    portalUrl,
+    tempPassword: candidateAccount.created ? candidateAccount.tempPassword : null,
+  });
+
   const messageParts = [
     "Order created. Candidate will appear in admin queue after form submission.",
   ];
+
+  if (emailResult.sent) {
+    messageParts.push("Candidate email sent successfully.");
+  } else {
+    messageParts.push(
+      `Order saved, but candidate email was not sent (${emailResult.reason || "email delivery failed"}).`,
+    );
+  }
 
   if (candidateAccount.created && candidateAccount.tempPassword) {
     messageParts.push(
@@ -267,10 +433,12 @@ export async function PATCH(req: NextRequest) {
 
   await connectMongo();
 
-  const companyServices = await getCompanyServices(companyId);
-  if (!companyServices) {
+  const companyProfile = await getCompanyProfile(companyId);
+  if (!companyProfile) {
     return NextResponse.json({ error: "Company account not found." }, { status: 404 });
   }
+
+  const companyServices = companyProfile.services;
 
   if (companyServices.length > 0 && parsed.data.selectedServiceIds.length === 0) {
     return NextResponse.json(
@@ -331,7 +499,23 @@ export async function PATCH(req: NextRequest) {
     rejectionNote: "",
   });
 
+  const portalUrl = process.env.CANDIDATE_PORTAL_URL?.trim() || "http://localhost:3012";
+  const emailResult = await sendVerificationRequestEmail({
+    recipientName: parsed.data.candidateName,
+    recipientEmail: parsed.data.candidateEmail.toLowerCase(),
+    companyName: companyProfile.companyName,
+    portalUrl,
+    tempPassword: candidateAccount.created ? candidateAccount.tempPassword : null,
+  });
+
   const messageParts = ["Request updated. Candidate must refill the form before admin review."];
+  if (emailResult.sent) {
+    messageParts.push("Candidate email sent successfully.");
+  } else {
+    messageParts.push(
+      `Request updated, but candidate email was not sent (${emailResult.reason || "email delivery failed"}).`,
+    );
+  }
   if (candidateAccount.created && candidateAccount.tempPassword) {
     messageParts.push(
       `New candidate account created. Temporary password: ${candidateAccount.tempPassword}`,
