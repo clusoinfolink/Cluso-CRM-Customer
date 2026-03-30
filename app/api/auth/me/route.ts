@@ -1,30 +1,22 @@
 import { NextResponse } from "next/server";
-import { cookies } from "next/headers";
-import { customerCookieName, verifyCustomerToken } from "@/lib/auth";
+import { getCustomerAuthFromCookies } from "@/lib/auth";
 import { connectMongo } from "@/lib/mongodb";
 import User from "@/lib/models/User";
 
 export async function GET() {
-  const cookieStore = await cookies();
-  const token = cookieStore.get(customerCookieName())?.value;
-
-  if (!token) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
-  const payload = verifyCustomerToken(token);
-  if (!payload) {
+  const auth = await getCustomerAuthFromCookies();
+  if (!auth) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   await connectMongo();
 
-  const user = await User.findById(payload.userId).lean();
+  const user = await User.findById(auth.userId).lean();
   if (!user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const companyId = payload.role === "customer" ? payload.userId : payload.parentCustomerId;
+  const companyId = auth.role === "customer" ? auth.userId : auth.parentCustomerId;
   const companyUser = companyId ? await User.findById(companyId).lean() : null;
   const availableServices = (companyUser?.selectedServices ?? []).map((item) => ({
     serviceId: String(item.serviceId),

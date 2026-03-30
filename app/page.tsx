@@ -41,7 +41,7 @@ export default function LoginPage() {
           <p className="block-kicker">Cluso Verification Network</p>
           <BlockTitle
             icon={<Sparkles size={14} />}
-            title="Futuristic Customer Workspace"
+            title="Futuristic Partner Workspace"
             subtitle="Securely submit candidate requests, manage delegates, and track status updates in one command center."
           />
           <div className="auth-hero-list">
@@ -63,7 +63,7 @@ export default function LoginPage() {
         <BlockCard interactive>
           <BlockTitle
             icon={<LockKeyhole size={14} />}
-            title="Customer Login"
+            title="Partner Login"
             subtitle="No self-signup is enabled. Use your company account created by Cluso Admin."
           />
 

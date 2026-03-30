@@ -21,6 +21,39 @@ const UserSchema = new Schema(
       ref: "User",
       default: null,
     },
+    sessionVersion: {
+      type: Number,
+      default: 0,
+    },
+    accessRoleHistory: [
+      {
+        fromRole: {
+          type: String,
+          enum: ["delegate", "delegate_user"],
+          required: true,
+        },
+        toRole: {
+          type: String,
+          enum: ["delegate", "delegate_user"],
+          required: true,
+        },
+        changedBy: {
+          type: Schema.Types.ObjectId,
+          ref: "User",
+          required: true,
+        },
+        changedAt: {
+          type: Date,
+          default: Date.now,
+          required: true,
+        },
+        reason: {
+          type: String,
+          required: true,
+          trim: true,
+        },
+      },
+    ],
     selectedServices: [
       {
         serviceId: {
@@ -45,13 +78,17 @@ const hasDelegateUserRole =
 const hasCandidateRole =
   Array.isArray(existingUserRoleValues) && existingUserRoleValues.includes("candidate");
 const hasCreatedByDelegatePath = Boolean(models.User?.schema.path("createdByDelegate"));
+const hasSessionVersionPath = Boolean(models.User?.schema.path("sessionVersion"));
+const hasAccessRoleHistoryPath = Boolean(models.User?.schema.path("accessRoleHistory"));
 
 if (
   models.User &&
   (!models.User.schema.path("selectedServices") ||
     !hasDelegateUserRole ||
     !hasCandidateRole ||
-    !hasCreatedByDelegatePath)
+    !hasCreatedByDelegatePath ||
+    !hasSessionVersionPath ||
+    !hasAccessRoleHistoryPath)
 ) {
   delete models.User;
 }

@@ -76,7 +76,7 @@ export default function DashboardOverviewPage() {
     <PortalFrame
       me={me}
       onLogout={logout}
-      title="Customer Overview"
+      title="Partner Overview"
       subtitle="Use quick actions to complete one task at a time with less clutter."
     >
       {rejectedCount > 0 ? (

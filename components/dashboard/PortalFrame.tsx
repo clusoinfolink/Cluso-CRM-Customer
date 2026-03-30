@@ -108,7 +108,7 @@ export function PortalFrame({ me, onLogout, title, subtitle, children }: PortalF
             </span>
             <div>
               <strong>Cluso</strong>
-              <p>Customer portal</p>
+              <p>Partner portal</p>
             </div>
           </div>
 

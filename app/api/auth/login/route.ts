@@ -37,6 +37,10 @@ export async function POST(req: Request) {
     userId: String(user._id),
     role: user.role,
     parentCustomerId: user.parentCustomer ? String(user.parentCustomer) : null,
+    sessionVersion:
+      typeof user.sessionVersion === "number" && Number.isFinite(user.sessionVersion)
+        ? Math.max(0, Math.trunc(user.sessionVersion))
+        : 0,
   });
 
   const res = NextResponse.json({ message: "Logged in" });
