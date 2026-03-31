@@ -8,13 +8,12 @@ import {
   ClipboardPlus,
   Layers3,
   ListChecks,
-  ShieldAlert,
   TriangleAlert,
   UserPlus,
   type LucideIcon,
 } from "lucide-react";
 import { PortalFrame } from "@/components/dashboard/PortalFrame";
-import { BlockCard, BlockTitle } from "@/components/ui/blocks";
+import { BlockCard } from "@/components/ui/blocks";
 import { usePortalSession } from "@/lib/hooks/usePortalSession";
 import { useRequestsData } from "@/lib/hooks/useRequestsData";
 
@@ -69,9 +68,6 @@ export default function DashboardOverviewPage() {
     { label: "Rejected", value: rejectedCount, tone: "portal-stat-rose", icon: TriangleAlert, href: "/dashboard/requests" },
     { label: "Total", value: items.length, tone: "portal-stat-violet", icon: Layers3, href: "/dashboard/requests" },
   ];
-  const recentItems = [...items]
-    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-    .slice(0, 5);
 
   return (
     <PortalFrame
@@ -152,34 +148,6 @@ export default function DashboardOverviewPage() {
         </Link>
       </section>
 
-      <BlockCard interactive>
-        <BlockTitle
-          icon={<ShieldAlert size={14} />}
-          title="Latest Activity"
-          subtitle="Most recent request entries for quick visibility."
-        />
-
-        {recentItems.length === 0 ? (
-          <p className="block-subtitle">No requests yet. Start by creating your first order.</p>
-        ) : (
-          <div className="recent-request-list">
-            {recentItems.map((item) => (
-              <article key={item._id} className="recent-request-item">
-                <div>
-                  <strong>{item.candidateName}</strong>
-                  <p className="block-subtitle recent-request-meta">{item.candidateEmail}</p>
-                </div>
-                <div className="recent-request-right">
-                  <span className={`status-pill status-pill-${item.status}`} style={{ textTransform: "capitalize" }}>
-                    {item.status}
-                  </span>
-                  <span className="recent-request-meta">{new Date(item.createdAt).toLocaleDateString()}</span>
-                </div>
-              </article>
-            ))}
-          </div>
-        )}
-      </BlockCard>
     </PortalFrame>
   );
 }

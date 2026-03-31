@@ -36,6 +36,22 @@ const VerificationRequestSchema = new Schema(
       default: null,
     },
     rejectionNote: { type: String, default: "" },
+    customerRejectedFields: [
+      {
+        serviceId: {
+          type: Schema.Types.ObjectId,
+          ref: "Service",
+          required: true,
+        },
+        serviceName: { type: String, required: true },
+        question: { type: String, required: true },
+        fieldType: {
+          type: String,
+          enum: ["text", "long_text", "number", "file"],
+          required: true,
+        },
+      },
+    ],
     candidateFormResponses: [
       {
         serviceId: {
@@ -89,6 +105,7 @@ if (models.VerificationRequest && !models.VerificationRequest.schema.path("selec
 if (
   models.VerificationRequest &&
   (!models.VerificationRequest.schema.path("candidateFormStatus") ||
+    !models.VerificationRequest.schema.path("customerRejectedFields") ||
     !models.VerificationRequest.schema.path("candidateFormResponses") ||
     !models.VerificationRequest.schema.path("candidateUser") ||
     !models.VerificationRequest.schema.path("candidateFormResponses.answers.fileData") ||

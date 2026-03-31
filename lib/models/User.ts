@@ -25,6 +25,24 @@ const UserSchema = new Schema(
       type: Number,
       default: 0,
     },
+    isActive: {
+      type: Boolean,
+      default: true,
+    },
+    deactivatedAt: {
+      type: Date,
+      default: null,
+    },
+    deactivatedBy: {
+      type: Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
+    },
+    deactivationReason: {
+      type: String,
+      default: "",
+      trim: true,
+    },
     accessRoleHistory: [
       {
         fromRole: {
@@ -79,6 +97,10 @@ const hasCandidateRole =
   Array.isArray(existingUserRoleValues) && existingUserRoleValues.includes("candidate");
 const hasCreatedByDelegatePath = Boolean(models.User?.schema.path("createdByDelegate"));
 const hasSessionVersionPath = Boolean(models.User?.schema.path("sessionVersion"));
+const hasIsActivePath = Boolean(models.User?.schema.path("isActive"));
+const hasDeactivatedAtPath = Boolean(models.User?.schema.path("deactivatedAt"));
+const hasDeactivatedByPath = Boolean(models.User?.schema.path("deactivatedBy"));
+const hasDeactivationReasonPath = Boolean(models.User?.schema.path("deactivationReason"));
 const hasAccessRoleHistoryPath = Boolean(models.User?.schema.path("accessRoleHistory"));
 
 if (
@@ -88,6 +110,10 @@ if (
     !hasCandidateRole ||
     !hasCreatedByDelegatePath ||
     !hasSessionVersionPath ||
+    !hasIsActivePath ||
+    !hasDeactivatedAtPath ||
+    !hasDeactivatedByPath ||
+    !hasDeactivationReasonPath ||
     !hasAccessRoleHistoryPath)
 ) {
   delete models.User;

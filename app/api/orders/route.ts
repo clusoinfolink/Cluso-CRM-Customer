@@ -23,6 +23,18 @@ const updateSchema = z.object({
   selectedServiceIds: z.array(z.string().min(1)).optional().default([]),
 });
 
+const rejectCandidateDataSchema = z.object({
+  action: z.literal("reject-candidate-data"),
+  requestId: z.string().min(1),
+  rejectedFields: z.array(
+    z.object({
+      serviceId: z.string().min(1),
+      question: z.string().trim().min(1),
+    }),
+  ).min(1),
+  rejectionComment: z.string().trim().max(500).optional().default(""),
+});
+
 function companyIdFromAuth(auth: {
   userId: string;
   role: "customer" | "delegate" | "delegate_user";
@@ -56,10 +68,31 @@ type VerificationEmailPayload = {
   tempPassword?: string | null;
 };
 
+type CandidateCorrectionEmailPayload = {
+  recipientName: string;
+  recipientEmail: string;
+  companyName: string;
+  portalUrl: string;
+  rejectedFields: Array<{
+    serviceName: string;
+    question: string;
+  }>;
+  rejectionComment?: string;
+};
+
 type EmailResult = {
   sent: boolean;
   reason?: string;
 };
+
+function escapeHtml(value: string) {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
 
 function resolveCandidatePortalUrl() {
   const configuredUrl = process.env.CANDIDATE_PORTAL_URL?.trim();
@@ -130,24 +163,9 @@ async function sendVerificationRequestEmail(payload: VerificationEmailPayload): 
     .filter(Boolean)
     .join("\n");
 
-  const safeRecipient = payload.recipientName
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/\"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-  const safeCompany = payload.companyName
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/\"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-  const safePortalUrl = payload.portalUrl
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/\"/g, "&quot;")
-    .replace(/'/g, "&#39;");
+  const safeRecipient = escapeHtml(payload.recipientName);
+  const safeCompany = escapeHtml(payload.companyName);
+  const safePortalUrl = escapeHtml(payload.portalUrl);
 
   const credentialsHtml = payload.tempPassword
     ? `<p>Your candidate account was created for this request.<br />Login Email: ${payload.recipientEmail}<br />Temporary Password: ${payload.tempPassword}</p>`
@@ -184,6 +202,117 @@ async function sendVerificationRequestEmail(payload: VerificationEmailPayload): 
       Best regards,<br />
       Cluso Infolink Team<br />
       Clusosupport@gmail.com
+    </p>
+  `;
+
+  try {
+    await transporter.sendMail({
+      from: fromAddress,
+      to: payload.recipientEmail,
+      subject,
+      text,
+      html,
+    });
+    return { sent: true };
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : "Unknown email error";
+    return { sent: false, reason };
+  }
+}
+
+async function sendCandidateCorrectionEmail(
+  payload: CandidateCorrectionEmailPayload,
+): Promise<EmailResult> {
+  const smtpHost = process.env.SMTP_HOST?.trim();
+  const smtpPort = Number(process.env.SMTP_PORT ?? "587");
+  const smtpUser = process.env.SMTP_USER?.trim();
+  const smtpPass = process.env.SMTP_PASS?.trim();
+  const smtpSecure = process.env.SMTP_SECURE === "true" || smtpPort === 465;
+
+  if (!smtpHost || !smtpUser || !smtpPass || Number.isNaN(smtpPort)) {
+    return {
+      sent: false,
+      reason: "SMTP credentials are not configured.",
+    };
+  }
+
+  if (!payload.recipientEmail.trim()) {
+    return {
+      sent: false,
+      reason: "Candidate email is missing.",
+    };
+  }
+
+  const transporter = nodemailer.createTransport({
+    host: smtpHost,
+    port: smtpPort,
+    secure: smtpSecure,
+    auth: {
+      user: smtpUser,
+      pass: smtpPass,
+    },
+  });
+
+  const fromAddress =
+    process.env.VERIFICATION_MAIL_FROM?.trim() || `Cluso Infolink Team <${smtpUser}>`;
+  const subject = "Action Required: Please update your verification details";
+
+  const rejectedFieldLines = payload.rejectedFields.map(
+    (field, index) => `${index + 1}. ${field.serviceName}: ${field.question}`,
+  );
+
+  const trimmedComment = payload.rejectionComment?.trim() ?? "";
+
+  const text = [
+    `Dear ${payload.recipientName},`,
+    "",
+    `Some submitted details for your verification request from \"${payload.companyName}\" need correction.`,
+    "",
+    "Please login to the candidate portal and edit the highlighted fields, then resubmit:",
+    payload.portalUrl,
+    "",
+    "Fields marked for correction:",
+    ...rejectedFieldLines,
+    trimmedComment ? "" : null,
+    trimmedComment ? `Additional note: ${trimmedComment}` : null,
+    "",
+    "After you resubmit, the request will move back to admin review.",
+    "",
+    "Best regards,",
+    "Cluso Infolink Team",
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  const safeRecipient = escapeHtml(payload.recipientName);
+  const safeCompany = escapeHtml(payload.companyName);
+  const safePortalUrl = escapeHtml(payload.portalUrl);
+  const noteHtml = trimmedComment
+    ? `<p><strong>Additional note:</strong> ${escapeHtml(trimmedComment)}</p>`
+    : "";
+  const fieldsHtml = payload.rejectedFields
+    .map(
+      (field) =>
+        `<li><strong>${escapeHtml(field.serviceName)}</strong>: ${escapeHtml(field.question)}</li>`,
+    )
+    .join("");
+
+  const html = `
+    <p>Dear ${safeRecipient},</p>
+    <p>
+      Some submitted details for your verification request from "${safeCompany}" need correction.
+    </p>
+    <p>
+      Please login to the candidate portal and edit the highlighted fields, then resubmit.
+    </p>
+    <p><a href="${safePortalUrl}">${safePortalUrl}</a></p>
+    <p><strong>Fields marked for correction:</strong></p>
+    <ol>${fieldsHtml}</ol>
+    ${noteHtml}
+    <p>After you resubmit, the request will move back to admin review.</p>
+    <p>
+      Best regards,<br />
+      Cluso Infolink Team
     </p>
   `;
 
@@ -437,6 +566,148 @@ export async function PATCH(req: NextRequest) {
   }
 
   const body = await req.json();
+
+  const rejectParsed = rejectCandidateDataSchema.safeParse(body);
+  if (rejectParsed.success) {
+    await connectMongo();
+
+    const requestFilter: { _id: string; customer: string; createdBy?: string } = {
+      _id: rejectParsed.data.requestId,
+      customer: companyId,
+    };
+
+    if (auth.role === "delegate_user") {
+      requestFilter.createdBy = auth.userId;
+    }
+
+    const requestDoc = await VerificationRequest.findOne(requestFilter).lean();
+
+    if (!requestDoc) {
+      return NextResponse.json({ error: "Request not found." }, { status: 404 });
+    }
+
+    if (requestDoc.candidateFormStatus !== "submitted") {
+      return NextResponse.json(
+        { error: "Candidate has not submitted form data yet." },
+        { status: 400 },
+      );
+    }
+
+    if (!requestDoc.candidateFormResponses || requestDoc.candidateFormResponses.length === 0) {
+      return NextResponse.json(
+        { error: "No candidate form data found for this request." },
+        { status: 400 },
+      );
+    }
+
+    if (requestDoc.status === "approved") {
+      return NextResponse.json(
+        { error: "Approved requests cannot be rejected from customer portal." },
+        { status: 400 },
+      );
+    }
+
+    const availableFieldMap = new Map<
+      string,
+      {
+        serviceId: string;
+        serviceName: string;
+        question: string;
+        fieldType: "text" | "long_text" | "number" | "file";
+      }
+    >();
+
+    for (const serviceResponse of requestDoc.candidateFormResponses ?? []) {
+      const serviceId = String(serviceResponse.serviceId);
+      const serviceName = serviceResponse.serviceName;
+      for (const answer of serviceResponse.answers ?? []) {
+        const question = answer.question.trim();
+        const fieldKey = `${serviceId}::${question}`;
+        availableFieldMap.set(fieldKey, {
+          serviceId,
+          serviceName,
+          question,
+          fieldType: answer.fieldType,
+        });
+      }
+    }
+
+    const rejectedFieldMap = new Map<
+      string,
+      {
+        serviceId: string;
+        serviceName: string;
+        question: string;
+        fieldType: "text" | "long_text" | "number" | "file";
+      }
+    >();
+
+    for (const selectedField of rejectParsed.data.rejectedFields) {
+      const normalizedQuestion = selectedField.question.trim();
+      const selectedKey = `${selectedField.serviceId}::${normalizedQuestion}`;
+      const matchedField = availableFieldMap.get(selectedKey);
+      if (!matchedField) {
+        return NextResponse.json(
+          { error: "One or more selected fields are invalid for this request." },
+          { status: 400 },
+        );
+      }
+
+      rejectedFieldMap.set(selectedKey, matchedField);
+    }
+
+    const rejectedFields = [...rejectedFieldMap.values()];
+    if (rejectedFields.length === 0) {
+      return NextResponse.json(
+        { error: "Please select at least one field to reject." },
+        { status: 400 },
+      );
+    }
+
+    const rejectedQuestions = rejectedFields.map((field) => field.question);
+    const baseRejectionNote = `Customer requested correction for: ${rejectedQuestions.join(", ")}.`;
+    const trimmedComment = rejectParsed.data.rejectionComment.trim();
+    const rejectionNote = trimmedComment
+      ? `${baseRejectionNote} Note: ${trimmedComment}`
+      : baseRejectionNote;
+
+    await VerificationRequest.findByIdAndUpdate(rejectParsed.data.requestId, {
+      status: "rejected",
+      candidateFormStatus: "pending",
+      candidateSubmittedAt: null,
+      rejectionNote,
+      customerRejectedFields: rejectedFields,
+    });
+
+    const companyProfile = await getCompanyProfile(companyId);
+    const correctionEmail = await sendCandidateCorrectionEmail({
+      recipientName: requestDoc.candidateName,
+      recipientEmail: requestDoc.candidateEmail.toLowerCase(),
+      companyName: companyProfile?.companyName ?? "your employer",
+      portalUrl: resolveCandidatePortalUrl(),
+      rejectedFields: rejectedFields.map((field) => ({
+        serviceName: field.serviceName,
+        question: field.question,
+      })),
+      rejectionComment: trimmedComment,
+    });
+
+    const messageParts = [
+      "Candidate data rejected. Selected fields were marked for correction and candidate can resubmit.",
+    ];
+    if (correctionEmail.sent) {
+      messageParts.push("Candidate correction email sent successfully.");
+    } else {
+      messageParts.push(
+        `Candidate data was rejected, but correction email was not sent (${correctionEmail.reason || "email delivery failed"}).`,
+      );
+    }
+
+    return NextResponse.json({
+      message: messageParts.join(" "),
+    });
+  }
+
   const parsed = updateSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json({ error: "Invalid candidate details." }, { status: 400 });
@@ -507,6 +778,7 @@ export async function PATCH(req: NextRequest) {
     candidateFormStatus: "pending",
     candidateSubmittedAt: null,
     candidateFormResponses: [],
+    customerRejectedFields: [],
     rejectionNote: "",
   });
 

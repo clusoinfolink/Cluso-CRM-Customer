@@ -66,9 +66,13 @@ async function hydrateCustomerAuthFromToken(token?: string) {
   await connectMongo();
 
   const user = await User.findById(payload.userId)
-    .select("_id role parentCustomer sessionVersion")
+    .select("_id role parentCustomer sessionVersion isActive")
     .lean();
   if (!user || !isPortalRole(user.role)) {
+    return null;
+  }
+
+  if (user.isActive === false) {
     return null;
   }
 

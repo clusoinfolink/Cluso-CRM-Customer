@@ -17,21 +17,38 @@ export default function LoginPage() {
     setLoading(true);
     setError("");
 
-    const res = await fetch("/api/auth/login", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password }),
-    });
+    try {
+      const res = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password }),
+      });
 
-    setLoading(false);
+      if (!res.ok) {
+        let message = res.status >= 500 ? "Server error. Please try again." : "Login failed";
+        const rawError = (await res.text()).trim();
 
-    if (!res.ok) {
-      const data = (await res.json()) as { error?: string };
-      setError(data.error ?? "Login failed");
-      return;
+        if (rawError) {
+          try {
+            const data = JSON.parse(rawError) as { error?: string; message?: string };
+            message = data.error?.trim() || data.message?.trim() || message;
+          } catch {
+            if (!rawError.startsWith("<")) {
+              message = rawError;
+            }
+          }
+        }
+
+        setError(message);
+        return;
+      }
+
+      router.push("/dashboard");
+    } catch {
+      setError("Could not reach server. Please try again.");
+    } finally {
+      setLoading(false);
     }
-
-    router.push("/dashboard");
   }
 
   return (
