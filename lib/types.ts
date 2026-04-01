@@ -1,10 +1,14 @@
+import type { SupportedCurrency } from "@/lib/currencies";
+
 export type PortalRole = "customer" | "delegate" | "delegate_user";
 
 export type ServiceOption = {
   serviceId: string;
   serviceName: string;
   price: number;
-  currency: "INR" | "USD";
+  currency: SupportedCurrency;
+  isPackage?: boolean;
+  includedServiceIds?: string[];
 };
 
 export type PortalUser = {

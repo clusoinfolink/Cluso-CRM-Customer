@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import { ClipboardPlus, Sparkles } from "lucide-react";
 import { PortalFrame } from "@/components/dashboard/PortalFrame";
 import { BlockCard, BlockTitle } from "@/components/ui/blocks";
@@ -15,6 +15,30 @@ export default function OrdersPage() {
   const [selectedServiceIds, setSelectedServiceIds] = useState<string[]>([]);
   const [message, setMessage] = useState("");
   const [submitting, setSubmitting] = useState(false);
+
+  const availableServices = me?.availableServices ?? [];
+  const serviceIdsCoveredByPackages = useMemo(
+    () =>
+      new Set(
+        availableServices.flatMap((service) =>
+          service.isPackage ? service.includedServiceIds ?? [] : [],
+        ),
+      ),
+    [availableServices],
+  );
+
+  const visibleServices = useMemo(
+    () =>
+      availableServices.filter(
+        (service) => service.isPackage || !serviceIdsCoveredByPackages.has(service.serviceId),
+      ),
+    [availableServices, serviceIdsCoveredByPackages],
+  );
+
+  useEffect(() => {
+    const visibleIds = new Set(visibleServices.map((service) => service.serviceId));
+    setSelectedServiceIds((prev) => prev.filter((serviceId) => visibleIds.has(serviceId)));
+  }, [visibleServices]);
 
   if (loading || !me) {
     return (
@@ -121,11 +145,11 @@ export default function OrdersPage() {
               />
             </div>
 
-            {me.availableServices.length ? (
+            {visibleServices.length ? (
               <div>
                 <label className="label">Select Services</label>
                 <div className="service-check-grid">
-                  {me.availableServices.map((service) => (
+                  {visibleServices.map((service) => (
                     <label key={service.serviceId} className="service-check">
                       <input
                         type="checkbox"
@@ -134,6 +158,16 @@ export default function OrdersPage() {
                       />
                       <span>
                         <strong>{service.serviceName}</strong>
+                        {service.isPackage ? (
+                          <span style={{ marginLeft: "0.45rem", fontSize: "0.78rem", fontWeight: 700, color: "#1E4DB7" }}>
+                            PACKAGE
+                          </span>
+                        ) : null}
+                        {service.isPackage && (service.includedServiceIds?.length ?? 0) > 0 ? (
+                          <span style={{ display: "block", color: "#6C757D", fontSize: "0.82rem", marginTop: "0.2rem" }}>
+                            Includes {(service.includedServiceIds ?? []).length} services
+                          </span>
+                        ) : null}
                       </span>
                     </label>
                   ))}

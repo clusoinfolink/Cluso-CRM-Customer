@@ -4,7 +4,9 @@ import crypto from "node:crypto";
 import nodemailer from "nodemailer";
 import { z } from "zod";
 import { getCustomerAuthFromRequest } from "@/lib/auth";
+import { type SupportedCurrency } from "@/lib/currencies";
 import { connectMongo } from "@/lib/mongodb";
+import Service from "@/lib/models/Service";
 import User from "@/lib/models/User";
 import VerificationRequest from "@/lib/models/VerificationRequest";
 
@@ -43,21 +45,159 @@ function companyIdFromAuth(auth: {
   return auth.role === "customer" ? auth.userId : auth.parentCustomerId;
 }
 
+type CompanyServiceSelection = {
+  serviceId: string;
+  serviceName: string;
+  price: number;
+  currency: SupportedCurrency;
+  isPackage: boolean;
+  includedServiceIds: string[];
+};
+
+type ExpandedSelectedService = {
+  serviceId: string;
+  serviceName: string;
+  price: number;
+  currency: SupportedCurrency;
+};
+
 async function getCompanyProfile(companyId: string) {
   const company = await User.findById(companyId).lean();
   if (!company || company.role !== "customer") {
     return null;
   }
 
+  const selectedServices = (company.selectedServices ?? []).map((item) => ({
+    serviceId: String(item.serviceId),
+    serviceName: item.serviceName,
+    price: typeof item.price === "number" ? item.price : 0,
+    currency: item.currency as SupportedCurrency,
+  }));
+
+  const selectedServiceIds = [...new Set(selectedServices.map((item) => item.serviceId))];
+  const serviceDocs =
+    selectedServiceIds.length > 0
+      ? await Service.find({ _id: { $in: selectedServiceIds } })
+          .select("name defaultPrice defaultCurrency isPackage includedServiceIds")
+          .lean()
+      : [];
+
+  const serviceMap = new Map(
+    serviceDocs.map((service) => [
+      String(service._id),
+      {
+        name: service.name,
+        defaultPrice: typeof service.defaultPrice === "number" ? service.defaultPrice : 0,
+        defaultCurrency: (service.defaultCurrency ?? "INR") as SupportedCurrency,
+        isPackage: Boolean(service.isPackage),
+        includedServiceIds: (service.includedServiceIds ?? []).map((id) => String(id)),
+      },
+    ]),
+  );
+
   return {
     companyName: company.name || "Company",
-    services: (company.selectedServices ?? []).map((item) => ({
-      serviceId: String(item.serviceId),
-      serviceName: item.serviceName,
-      price: item.price,
-      currency: item.currency,
-    })),
+    services: selectedServices.map((item) => {
+      const serviceMeta = serviceMap.get(item.serviceId);
+
+      return {
+        serviceId: item.serviceId,
+        serviceName: item.serviceName || serviceMeta?.name || "Service",
+        price: item.price,
+        currency: item.currency,
+        isPackage: Boolean(serviceMeta?.isPackage),
+        includedServiceIds: serviceMeta?.includedServiceIds ?? [],
+      } satisfies CompanyServiceSelection;
+    }),
   };
+}
+
+async function expandSelectedServices(
+  selectedServiceIds: string[],
+  companyServices: CompanyServiceSelection[],
+) {
+  const assignmentMap = new Map(companyServices.map((service) => [service.serviceId, service]));
+  const selectedAssignments = selectedServiceIds
+    .map((serviceId) => assignmentMap.get(serviceId))
+    .filter((service): service is CompanyServiceSelection => Boolean(service));
+
+  const includedServiceIds = [
+    ...new Set(
+      selectedAssignments.flatMap((service) =>
+        service.isPackage ? service.includedServiceIds : [],
+      ),
+    ),
+  ];
+
+  const includedServiceDocs =
+    includedServiceIds.length > 0
+      ? await Service.find({ _id: { $in: includedServiceIds } })
+          .select("name defaultPrice defaultCurrency isPackage")
+          .lean()
+      : [];
+
+  const includedServiceMap = new Map(
+    includedServiceDocs.map((service) => [
+      String(service._id),
+      {
+        name: service.name,
+        defaultPrice: typeof service.defaultPrice === "number" ? service.defaultPrice : 0,
+        defaultCurrency: (service.defaultCurrency ?? "INR") as SupportedCurrency,
+        isPackage: Boolean(service.isPackage),
+      },
+    ]),
+  );
+
+  const expanded: ExpandedSelectedService[] = [];
+  const seen = new Set<string>();
+
+  function pushService(service: ExpandedSelectedService) {
+    if (seen.has(service.serviceId)) {
+      return;
+    }
+
+    seen.add(service.serviceId);
+    expanded.push(service);
+  }
+
+  for (const selectedService of selectedAssignments) {
+    if (!selectedService.isPackage || selectedService.includedServiceIds.length === 0) {
+      pushService({
+        serviceId: selectedService.serviceId,
+        serviceName: selectedService.serviceName,
+        price: selectedService.price,
+        currency: selectedService.currency,
+      });
+      continue;
+    }
+
+    for (const includedServiceId of selectedService.includedServiceIds) {
+      const assignedService = assignmentMap.get(includedServiceId);
+      if (assignedService && !assignedService.isPackage) {
+        pushService({
+          serviceId: assignedService.serviceId,
+          serviceName: assignedService.serviceName,
+          price: assignedService.price,
+          currency: assignedService.currency,
+        });
+        continue;
+      }
+
+      const includedService = includedServiceMap.get(includedServiceId);
+      if (!includedService || includedService.isPackage) {
+        continue;
+      }
+
+      pushService({
+        serviceId: includedServiceId,
+        serviceName: includedService.name,
+        price: includedService.defaultPrice,
+        currency: includedService.defaultCurrency,
+      });
+    }
+  }
+
+  return expanded;
 }
 
 type VerificationEmailPayload = {
@@ -494,9 +634,17 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const selectedServices = companyServices.filter((item) =>
-    parsed.data.selectedServiceIds.includes(item.serviceId),
+  const selectedServices = await expandSelectedServices(
+    parsed.data.selectedServiceIds,
+    companyServices,
   );
+
+  if (parsed.data.selectedServiceIds.length > 0 && selectedServices.length === 0) {
+    return NextResponse.json(
+      { error: "Selected package deal is misconfigured. Please contact admin." },
+      { status: 400 },
+    );
+  }
 
   const candidateAccount = await ensureCandidateUser(
     parsed.data.candidateEmail,
@@ -738,9 +886,17 @@ export async function PATCH(req: NextRequest) {
     );
   }
 
-  const selectedServices = companyServices.filter((item) =>
-    parsed.data.selectedServiceIds.includes(item.serviceId),
+  const selectedServices = await expandSelectedServices(
+    parsed.data.selectedServiceIds,
+    companyServices,
   );
+
+  if (parsed.data.selectedServiceIds.length > 0 && selectedServices.length === 0) {
+    return NextResponse.json(
+      { error: "Selected package deal is misconfigured. Please contact admin." },
+      { status: 400 },
+    );
+  }
 
   const candidateAccount = await ensureCandidateUser(
     parsed.data.candidateEmail,
