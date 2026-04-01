@@ -16,7 +16,7 @@ export default function OrdersPage() {
   const [message, setMessage] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
-  const availableServices = me?.availableServices ?? [];
+  const availableServices = useMemo(() => me?.availableServices ?? [], [me?.availableServices]);
   const serviceIdsCoveredByPackages = useMemo(
     () =>
       new Set(
@@ -37,7 +37,14 @@ export default function OrdersPage() {
 
   useEffect(() => {
     const visibleIds = new Set(visibleServices.map((service) => service.serviceId));
-    setSelectedServiceIds((prev) => prev.filter((serviceId) => visibleIds.has(serviceId)));
+
+    const timer = window.setTimeout(() => {
+      setSelectedServiceIds((prev) => prev.filter((serviceId) => visibleIds.has(serviceId)));
+    }, 0);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
   }, [visibleServices]);
 
   if (loading || !me) {

@@ -1,9 +1,9 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useState } from "react";
-import { UserPlus, Users, Settings, Copy, Shield, AlertCircle } from "lucide-react";
+import { UserPlus, Users, Shield, AlertCircle } from "lucide-react";
 import { PortalFrame } from "@/components/dashboard/PortalFrame";
-import { BlockCard, BlockTitle } from "@/components/ui/blocks";
+import { BlockCard } from "@/components/ui/blocks";
 import { getAlertTone } from "@/lib/alerts";
 import { usePortalSession } from "@/lib/hooks/usePortalSession";
 
@@ -565,7 +565,7 @@ export default function TeamPage() {
                 <div className="p-12 text-center flex flex-col items-center">
                   <Users className="w-12 h-12 text-slate-300 mb-3" />
                   <p className="text-slate-600 font-medium">No accounts found</p>
-                  <p className="text-sm text-slate-400 mt-1">You haven't added any delegate logins yet.</p>
+                  <p className="text-sm text-slate-400 mt-1">You have not added any delegate logins yet.</p>
                 </div>
               ) : (
                 <div className="overflow-x-auto">
