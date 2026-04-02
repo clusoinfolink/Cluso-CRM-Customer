@@ -8,6 +8,7 @@ import {
   ClipboardPlus,
   Layers3,
   ListChecks,
+  ShieldCheck,
   TriangleAlert,
   UserPlus,
   type LucideIcon,
@@ -61,11 +62,13 @@ export default function DashboardOverviewPage() {
 
   const pendingCount = items.filter((item) => item.status === "pending").length;
   const approvedCount = items.filter((item) => item.status === "approved").length;
+  const verifiedCount = items.filter((item) => item.status === "verified").length;
   const rejectedCount = items.filter((item) => item.status === "rejected").length;
   const cards: CountCard[] = [
     { label: "Pending", value: pendingCount, tone: "portal-stat-sky", icon: ClipboardPlus, href: "/dashboard/requests" },
-    { label: "Approved", value: approvedCount, tone: "portal-stat-emerald", icon: BadgeCheck, href: "/dashboard/requests" },
-    { label: "Rejected", value: rejectedCount, tone: "portal-stat-rose", icon: TriangleAlert, href: "/dashboard/requests" },
+    { label: "Approved By Partner", value: approvedCount, tone: "portal-stat-emerald", icon: BadgeCheck, href: "/dashboard/requests" },
+    { label: "Rejected By Partner", value: rejectedCount, tone: "portal-stat-rose", icon: TriangleAlert, href: "/dashboard/requests" },
+    { label: "Verified", value: verifiedCount, tone: "portal-stat-sky", icon: ShieldCheck, href: "/dashboard/requests" },
     { label: "Total", value: items.length, tone: "portal-stat-violet", icon: Layers3, href: "/dashboard/requests" },
   ];
 
@@ -126,7 +129,7 @@ export default function DashboardOverviewPage() {
             </span>
             <strong>Review Requests</strong>
           </div>
-          <p className="block-subtitle">Track pending, approved, and rejected items with a focused request view.</p>
+          <p className="block-subtitle">Track pending, partner decisions, and verified items with a focused request view.</p>
           <span className="quick-action-link">
             Open Requests
             <ArrowRight size={14} />

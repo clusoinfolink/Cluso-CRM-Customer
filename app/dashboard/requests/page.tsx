@@ -29,6 +29,22 @@ function parseRejectedFieldKey(fieldKey: string) {
   return { serviceId, question };
 }
 
+function getPartnerStatusLabel(status: RequestStatus) {
+  if (status === "approved") {
+    return "approved by partner";
+  }
+
+  if (status === "rejected") {
+    return "rejected by partner";
+  }
+
+  if (status === "verified") {
+    return "verified";
+  }
+
+  return status;
+}
+
 function RequestsPageContent() {
   const { me, loading, logout } = usePortalSession();
   const searchParams = useSearchParams();
@@ -37,11 +53,13 @@ function RequestsPageContent() {
   const [searchText, setSearchText] = useState("");
   const [message, setMessage] = useState("");
   const [highlightedRequestId, setHighlightedRequestId] = useState("");
+  const [selectedActionRowId, setSelectedActionRowId] = useState("");
   const [activeResponseRequestId, setActiveResponseRequestId] = useState("");
   const [isRejectSelectorOpen, setIsRejectSelectorOpen] = useState(false);
   const [selectedRejectedFieldKeys, setSelectedRejectedFieldKeys] = useState<string[]>([]);
   const [rejectionComment, setRejectionComment] = useState("");
   const [rejectingRequestId, setRejectingRequestId] = useState("");
+  const [decisioningRequestId, setDecisioningRequestId] = useState("");
 
   const [editingRequestId, setEditingRequestId] = useState("");
   const [editCandidateName, setEditCandidateName] = useState("");
@@ -97,6 +115,7 @@ function RequestsPageContent() {
 
   const pendingRequests = filteredRequests.filter((item) => item.status === "pending");
   const approvedRequests = filteredRequests.filter((item) => item.status === "approved");
+  const verifiedRequests = filteredRequests.filter((item) => item.status === "verified");
   const rejectedRequests = filteredRequests.filter((item) => item.status === "rejected");
 
   useEffect(() => {
@@ -199,6 +218,73 @@ function RequestsPageContent() {
     }
 
     setMessage(data.message ?? "Candidate data rejected and marked for correction.");
+    closeResponseModal();
+    await refreshRequests();
+  }
+
+  async function submitPartnerDecision(action: "partner-approve" | "partner-reject") {
+    if (!activeResponseRequest) {
+      return;
+    }
+
+    if (activeResponseRequest.candidateFormStatus !== "submitted") {
+      setMessage("Candidate has not submitted form data yet.");
+      return;
+    }
+
+    if (activeResponseRequest.status === "verified") {
+      setMessage("Verified requests cannot be changed from customer portal.");
+      return;
+    }
+
+    if (action === "partner-approve") {
+      const isConfirmed = window.confirm("Confirm approve this request?");
+      if (!isConfirmed) {
+        return;
+      }
+    }
+
+    let rejectionNote = "";
+    if (action === "partner-reject") {
+      const note = window.prompt(
+        "Optional rejection note for the team:",
+        "Rejected by partner.",
+      );
+
+      if (note === null) {
+        return;
+      }
+
+      rejectionNote = note.trim();
+
+      const isConfirmed = window.confirm("Confirm reject this request?");
+      if (!isConfirmed) {
+        return;
+      }
+    }
+
+    setMessage("");
+    setDecisioningRequestId(activeResponseRequest._id);
+
+    const res = await fetch("/api/orders", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action,
+        requestId: activeResponseRequest._id,
+        rejectionNote,
+      }),
+    });
+
+    const data = (await res.json()) as { message?: string; error?: string };
+    setDecisioningRequestId("");
+
+    if (!res.ok) {
+      setMessage(data.error ?? "Could not update request status.");
+      return;
+    }
+
+    setMessage(data.message ?? "Request status updated.");
     closeResponseModal();
     await refreshRequests();
   }
@@ -413,7 +499,7 @@ function RequestsPageContent() {
     return (
       <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden mb-6">
         <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
-          <h3 className="text-lg font-bold text-slate-800 m-0 flex items-center gap-2">
+          <h3 style={{ fontSize: "0.98rem", color: "#2D405E", margin: 0, fontWeight: 600, display: "flex", alignItems: "center", gap: "0.4rem" }}>
             {title}
             <span className="bg-blue-100/50 text-blue-700 px-2 py-0.5 rounded-full text-xs font-semibold">
               {itemsByStatus.length}
@@ -427,37 +513,47 @@ function RequestsPageContent() {
           </div>
         ) : (
           <div className="overflow-x-auto w-full">
-            <table className="w-full text-sm text-left whitespace-nowrap">
+            <table className="w-full min-w-[980px] text-sm text-left">
               <thead className="bg-slate-50 text-slate-600 border-b border-slate-200 uppercase text-xs font-semibold tracking-wider">
                 <tr>
-                  <th className="px-5 py-3.5">Candidate</th>
-                  <th className="px-5 py-3.5">Contact</th>
-                  <th className="px-5 py-3.5">Services</th>
-                  <th className="px-5 py-3.5">Status</th>
-                  <th className="px-5 py-3.5">Timeline</th>
-                  <th className="px-5 py-3.5">Team</th>
-                  <th className="px-5 py-3.5 text-right">Actions</th>
+                  <th className="px-3 sm:px-4 lg:px-5 py-3.5">Candidate</th>
+                  <th className="px-3 sm:px-4 lg:px-5 py-3.5">Contact</th>
+                  <th className="px-3 sm:px-4 lg:px-5 py-3.5">Services</th>
+                  <th className="px-3 sm:px-4 lg:px-5 py-3.5">Status</th>
+                  <th className="px-3 sm:px-4 lg:px-5 py-3.5">Timeline</th>
+                  <th className="px-3 sm:px-4 lg:px-5 py-3.5">Team</th>
+                  <th className="px-3 sm:px-4 lg:px-5 py-3.5 text-right">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {itemsByStatus.map((item) => {
+                {itemsByStatus.map((item, index) => {
                   const hasResponses = Boolean(item.candidateFormResponses && item.candidateFormResponses.length > 0);
                   const formSubmitted = item.candidateFormStatus === "submitted";
+                  const isActionRowActive = selectedActionRowId === item._id;
 
                   return (
                     <tr
                       key={`${statusType}-${item._id}`}
                       id={`request-${item._id}`}
-                      className={`hover:bg-slate-50/80 transition-colors ${highlightedRequestId === item._id ? "bg-blue-50/40" : ""}`}
+                      onClick={() => setSelectedActionRowId(item._id)}
+                      className={`transition-colors cursor-pointer ${
+                        isActionRowActive
+                          ? "bg-emerald-100/80 hover:bg-emerald-200/70"
+                          : highlightedRequestId === item._id
+                            ? "bg-blue-50/40 hover:bg-blue-50/70"
+                            : index % 2 === 1
+                              ? "bg-slate-50/70 hover:bg-slate-100/80"
+                              : "hover:bg-slate-50/80"
+                      }`}
                     >
-                      <td className="px-5 py-4">
+                      <td className="px-3 sm:px-4 lg:px-5 py-4 whitespace-nowrap">
                         <div className="font-bold text-slate-800">{item.candidateName}</div>
                       </td>
-                      <td className="px-5 py-4">
+                      <td className="px-3 sm:px-4 lg:px-5 py-4 whitespace-nowrap">
                         <div className="text-slate-700 font-medium">{item.candidateEmail || "-"}</div>
                         <div className="text-slate-500 text-xs mt-0.5">{item.candidatePhone || "-"}</div>
                       </td>
-                      <td className="px-5 py-4 max-w-[200px] whitespace-normal">
+                      <td className="px-3 sm:px-4 lg:px-5 py-4 max-w-[200px] whitespace-normal">
                         <div className="flex flex-wrap gap-1">
                           {item.selectedServices && item.selectedServices.length > 0
                             ? item.selectedServices.map((service, idx) => (
@@ -468,14 +564,15 @@ function RequestsPageContent() {
                             : <span className="text-slate-400">-</span>}
                         </div>
                       </td>
-                      <td className="px-5 py-4">
+                      <td className="px-3 sm:px-4 lg:px-5 py-4">
                         <div>
                           <span className={`inline-flex px-2.5 py-1 rounded-full text-xs font-bold capitalize ${
+                            item.status === 'verified' ? 'bg-emerald-200 text-emerald-900 border border-emerald-400 animate-pulse' :
                             item.status === 'approved' ? 'bg-green-100 text-green-700 border border-green-200' :
                             item.status === 'rejected' ? 'bg-red-100 text-red-700 border border-red-200' :
                             'bg-yellow-100 text-yellow-700 border border-yellow-200'
                           }`}>
-                            {item.status}
+                            {getPartnerStatusLabel(item.status)}
                           </span>
                         </div>
                         <div className="mt-1.5 flex items-center gap-1.5 text-xs font-medium">
@@ -486,12 +583,12 @@ function RequestsPageContent() {
                         </div>
                         {item.rejectionNote && (
                           <div className="mt-2 text-xs text-red-600 font-medium max-w-[180px] whitespace-normal">
-                             <strong className="text-red-700 block">Admin Note:</strong>
+                             <strong className="text-red-700 block">Review Note:</strong>
                              {item.rejectionNote}
                           </div>
                         )}
                       </td>
-                      <td className="px-5 py-4">
+                      <td className="px-3 sm:px-4 lg:px-5 py-4 whitespace-nowrap">
                         <div className="text-xs text-slate-500">
                           <span className="font-semibold text-slate-700">Created: </span> 
                           {new Date(item.createdAt).toLocaleDateString()}
@@ -501,7 +598,7 @@ function RequestsPageContent() {
                           {item.candidateSubmittedAt ? new Date(item.candidateSubmittedAt).toLocaleDateString() : "-"}
                         </div>
                       </td>
-                      <td className="px-5 py-4">
+                      <td className="px-3 sm:px-4 lg:px-5 py-4">
                         <div className="text-xs">
                           <span className="font-semibold text-slate-700">By:</span> {item.createdByName || "Unknown"}
                         </div>
@@ -511,14 +608,18 @@ function RequestsPageContent() {
                           </div>
                         )}
                       </td>
-                      <td className="px-5 py-4 text-right">
+                      <td className="px-3 sm:px-4 lg:px-5 py-4 text-right">
                          <div className="flex flex-col items-end gap-2">
                            <button
                              type="button"
                              className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all shadow-sm ${
                                hasResponses
-                                 ? "bg-white border border-slate-300 text-slate-700 hover:bg-slate-50 hover:text-blue-600 focus:ring-2 focus:ring-blue-100"
-                                 : "bg-slate-50 border border-slate-200 text-slate-400 cursor-not-allowed"
+                                 ? isActionRowActive
+                                   ? "bg-amber-100 border border-amber-300 text-amber-800 hover:-translate-y-0.5 hover:bg-amber-200 hover:border-amber-400 hover:text-amber-900 active:translate-y-0 active:scale-[0.98] active:bg-amber-300 active:border-amber-500 active:text-amber-950 focus:ring-2 focus:ring-amber-100"
+                                   : "bg-white border border-slate-300 text-slate-700 hover:-translate-y-0.5 hover:bg-slate-50 hover:border-slate-400 hover:text-slate-800 active:translate-y-0 active:scale-[0.98] active:bg-slate-100 active:text-slate-900 focus:ring-2 focus:ring-slate-100"
+                                 : isActionRowActive
+                                   ? "bg-rose-50 border border-rose-200 text-rose-500 cursor-not-allowed"
+                                   : "bg-slate-50 border border-slate-200 text-slate-400 cursor-not-allowed"
                              }`}
                              onClick={() => {
                                setActiveResponseRequestId(item._id);
@@ -532,9 +633,13 @@ function RequestsPageContent() {
                            </button>
 
                            {statusType === "rejected" && (
-                             <button 
-                               className="px-3 py-1.5 rounded-md text-xs font-bold transition-all shadow-sm bg-blue-50 border border-blue-200 text-blue-700 hover:bg-blue-100" 
-                               type="button" 
+                             <button
+                               className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all shadow-sm ${
+                                 isActionRowActive
+                                   ? "bg-blue-100 border border-blue-300 text-blue-800 hover:-translate-y-0.5 hover:bg-blue-200 hover:border-blue-400 hover:text-blue-900 active:translate-y-0 active:scale-[0.98] active:bg-blue-300 active:border-blue-500 active:text-blue-950"
+                                   : "bg-white border border-slate-300 text-slate-700 hover:-translate-y-0.5 hover:bg-slate-50 hover:border-slate-400 hover:text-slate-800 active:translate-y-0 active:scale-[0.98] active:bg-slate-100 active:text-slate-900"
+                               }`}
+                               type="button"
                                onClick={() => startRejectedEdit(item)}
                              >
                                Edit & Resubmit
@@ -642,17 +747,17 @@ function RequestsPageContent() {
       <BlockCard className="request-toolbar border border-gray-100 shadow-sm rounded-xl overflow-hidden mb-6" interactive>
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 p-4 lg:p-6 bg-white">
           <div className="flex flex-col">
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <span className="p-2 bg-blue-50 text-blue-600 rounded-lg">
                 <ListChecks size={20} />
               </span>
-              <h2 className="text-xl font-bold text-slate-800">Submitted Requests</h2>
+              <h2 style={{ fontSize: "0.98rem", color: "#2D405E", margin: 0, fontWeight: 600, display: "flex", alignItems: "center", gap: "0.4rem" }}>Submitted Requests</h2>
               <span className="ml-2 px-2.5 py-1 bg-slate-100 text-slate-600 text-xs font-semibold rounded-full border border-slate-200">
                 Table View
               </span>
             </div>
-            <p className="text-slate-500 text-sm mt-1 ml-11">
-              Search and monitor requests across pending, approved, and rejected states.
+            <p className="text-slate-500 text-sm mt-1 md:ml-11">
+              Search and monitor requests across pending, partner-approved, rejected, and verified states.
             </p>
           </div>
 
@@ -673,8 +778,9 @@ function RequestsPageContent() {
 
       <div className="flex flex-col gap-6">
         {renderRequestSection("Pending Requests", pendingRequests, "pending", "No pending requests currently actively waiting.")}
-        {renderRequestSection("Approved Requests", approvedRequests, "approved", "No approved requests found.")}
-        {renderRequestSection("Rejected Requests", rejectedRequests, "rejected", "No rejected requests requiring action.")}
+        {renderRequestSection("Approved By Partner", approvedRequests, "approved", "No partner-approved requests found.")}
+        {renderRequestSection("Verified Requests", verifiedRequests, "verified", "No verified requests found.")}
+        {renderRequestSection("Rejected By Partner", rejectedRequests, "rejected", "No partner-rejected requests requiring action.")}
       </div>
 
       {activeResponseRequest ? (
@@ -684,10 +790,10 @@ function RequestsPageContent() {
           aria-label="Candidate responses"
           className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-[1200] flex items-center justify-center p-4"
         >
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-4xl max-h-[86vh] overflow-y-auto p-6 relative">
-            <div className="flex justify-between items-start mb-6">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-4xl max-h-[86vh] overflow-y-auto p-4 sm:p-6 relative">
+            <div className="flex justify-between items-start gap-3 mb-6">
               <div>
-                <h3 className="text-xl font-bold text-slate-800 m-0">Candidate Responses</h3>
+                <h3 style={{ fontSize: "0.98rem", color: "#2D405E", margin: 0, fontWeight: 600, display: "flex", alignItems: "center", gap: "0.4rem" }}>Candidate Responses</h3>
                 <p className="mt-1 text-slate-600 font-medium whitespace-normal">
                   {activeResponseRequest.candidateName} <span className="text-slate-400 mx-1">•</span> {activeResponseRequest.candidateEmail}
                 </p>
@@ -696,9 +802,9 @@ function RequestsPageContent() {
                   Status: {activeResponseRequest.candidateFormStatus === "submitted" ? "Submitted" : "Pending"}
                 </p>
               </div>
-              <button 
-                type="button" 
-                className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors" 
+              <button
+                type="button"
+                className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-100 active:bg-slate-200 active:text-slate-700 rounded-lg transition-all duration-200"
                 onClick={closeResponseModal}
               >
                 <X size={20} />
@@ -712,14 +818,42 @@ function RequestsPageContent() {
             <div className="flex justify-end gap-3 mt-6 flex-wrap">
               <button
                 type="button"
-                className="px-4 py-2 bg-white border border-red-200 text-red-600 font-semibold rounded-lg hover:bg-red-50 hover:text-red-700 transition-colors focus:ring-2 focus:ring-red-100 disabled:opacity-50 disabled:cursor-not-allowed"
-                onClick={() => openRejectSelector(activeResponseRequest)}
+                className="w-full sm:w-auto px-4 py-2 bg-green-600 text-white font-semibold rounded-lg hover:-translate-y-0.5 hover:bg-green-700 active:translate-y-0 active:scale-[0.98] active:bg-green-800 transition-all duration-200 focus:ring-2 focus:ring-green-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                onClick={() => submitPartnerDecision("partner-approve")}
                 disabled={Boolean(
-                  !activeResponseRequest.candidateFormResponses ||
-                    activeResponseRequest.candidateFormResponses.length === 0,
+                  decisioningRequestId === activeResponseRequest._id ||
+                    activeResponseRequest.candidateFormStatus !== "submitted" ||
+                    activeResponseRequest.status === "verified",
                 )}
               >
-                Reject Candidate Data
+                {decisioningRequestId === activeResponseRequest._id ? "Updating..." : "Approve"}
+              </button>
+
+              <button
+                type="button"
+                className="w-full sm:w-auto px-4 py-2 bg-red-600 text-white font-semibold rounded-lg hover:-translate-y-0.5 hover:bg-red-700 active:translate-y-0 active:scale-[0.98] active:bg-red-800 transition-all duration-200 focus:ring-2 focus:ring-red-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                onClick={() => submitPartnerDecision("partner-reject")}
+                disabled={Boolean(
+                  decisioningRequestId === activeResponseRequest._id ||
+                    activeResponseRequest.candidateFormStatus !== "submitted" ||
+                    activeResponseRequest.status === "verified",
+                )}
+              >
+                {decisioningRequestId === activeResponseRequest._id ? "Updating..." : "Reject"}
+              </button>
+
+              <button
+                type="button"
+                className="w-full sm:w-auto px-4 py-2 bg-white border border-red-200 text-red-600 font-semibold rounded-lg hover:-translate-y-0.5 hover:bg-red-50 hover:text-red-700 active:translate-y-0 active:scale-[0.98] active:bg-red-100 transition-all duration-200 focus:ring-2 focus:ring-red-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                onClick={() => openRejectSelector(activeResponseRequest)}
+                disabled={Boolean(
+                  decisioningRequestId === activeResponseRequest._id ||
+                  !activeResponseRequest.candidateFormResponses ||
+                    activeResponseRequest.candidateFormResponses.length === 0 ||
+                    activeResponseRequest.status === "verified",
+                )}
+              >
+                Reject Candidate Data For Correction
               </button>
             </div>
 
@@ -790,10 +924,10 @@ function RequestsPageContent() {
                   />
                 </div>
 
-                <div className="flex items-center gap-3 pt-2">
+                <div className="flex items-center gap-3 pt-2 flex-wrap">
                   <button
                     type="button"
-                    className="px-4 py-2 bg-red-600 text-white font-semibold rounded-lg hover:bg-red-700 transition-colors focus:ring-2 focus:ring-red-200 disabled:opacity-50"
+                    className="w-full sm:w-auto px-4 py-2 bg-red-600 text-white font-semibold rounded-lg hover:-translate-y-0.5 hover:bg-red-700 active:translate-y-0 active:scale-[0.98] active:bg-red-800 transition-all duration-200 focus:ring-2 focus:ring-red-200 disabled:opacity-50"
                     onClick={submitSelectedFieldRejection}
                     disabled={rejectingRequestId === activeResponseRequest._id}
                   >
@@ -801,7 +935,7 @@ function RequestsPageContent() {
                   </button>
                   <button
                     type="button"
-                    className="px-4 py-2 bg-white border border-slate-300 text-slate-700 font-semibold rounded-lg hover:bg-slate-50 transition-colors disabled:opacity-50"
+                    className="w-full sm:w-auto px-4 py-2 bg-white border border-slate-300 text-slate-700 font-semibold rounded-lg hover:-translate-y-0.5 hover:bg-slate-50 active:translate-y-0 active:scale-[0.98] active:bg-slate-100 transition-all duration-200 disabled:opacity-50"
                     onClick={() => setIsRejectSelectorOpen(false)}
                     disabled={rejectingRequestId === activeResponseRequest._id}
                   >

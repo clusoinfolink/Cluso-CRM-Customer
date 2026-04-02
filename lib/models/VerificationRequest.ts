@@ -16,6 +16,11 @@ const VerificationRequestSchema = new Schema(
       ref: "User",
       required: true,
     },
+    createdByDelegate: {
+      type: Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
+    },
     candidateUser: {
       type: Schema.Types.ObjectId,
       ref: "User",
@@ -23,7 +28,7 @@ const VerificationRequestSchema = new Schema(
     },
     status: {
       type: String,
-      enum: ["pending", "approved", "rejected"],
+      enum: ["pending", "approved", "rejected", "verified"],
       default: "pending",
     },
     candidateFormStatus: {
@@ -47,7 +52,7 @@ const VerificationRequestSchema = new Schema(
         question: { type: String, required: true },
         fieldType: {
           type: String,
-          enum: ["text", "long_text", "number", "file"],
+          enum: ["text", "long_text", "number", "file", "date"],
           required: true,
         },
       },
@@ -65,7 +70,7 @@ const VerificationRequestSchema = new Schema(
             question: { type: String, required: true },
             fieldType: {
               type: String,
-              enum: ["text", "long_text", "number", "file"],
+              enum: ["text", "long_text", "number", "file", "date"],
               required: true,
             },
             required: { type: Boolean, default: false },
@@ -104,9 +109,11 @@ if (models.VerificationRequest && !models.VerificationRequest.schema.path("selec
 
 if (
   models.VerificationRequest &&
-  (!models.VerificationRequest.schema.path("candidateFormStatus") ||
+  (!models.VerificationRequest.schema.path("status")?.options?.enum?.includes("verified") ||
+    !models.VerificationRequest.schema.path("candidateFormStatus") ||
     !models.VerificationRequest.schema.path("customerRejectedFields") ||
     !models.VerificationRequest.schema.path("candidateFormResponses") ||
+    !models.VerificationRequest.schema.path("createdByDelegate") ||
     !models.VerificationRequest.schema.path("candidateUser") ||
     !models.VerificationRequest.schema.path("candidateFormResponses.answers.fileData") ||
     !models.VerificationRequest.schema.path("candidateFormResponses.answers.required"))

@@ -37,12 +37,80 @@ const rejectCandidateDataSchema = z.object({
   rejectionComment: z.string().trim().max(500).optional().default(""),
 });
 
+const partnerDecisionSchema = z.object({
+  action: z.enum(["partner-approve", "partner-reject"]),
+  requestId: z.string().min(1),
+  rejectionNote: z.string().trim().max(500).optional().default(""),
+});
+
 function companyIdFromAuth(auth: {
   userId: string;
   role: "customer" | "delegate" | "delegate_user";
   parentCustomerId: string | null;
 }) {
   return auth.role === "customer" ? auth.userId : auth.parentCustomerId;
+}
+
+async function buildScopedRequestFilter(auth: {
+  userId: string;
+  role: "customer" | "delegate" | "delegate_user";
+  parentCustomerId: string | null;
+}, companyId: string) {
+  if (auth.role === "customer") {
+    return {
+      ok: true as const,
+      filter: { customer: companyId } as Record<string, unknown>,
+    };
+  }
+
+  if (auth.role === "delegate_user") {
+    const delegateUser = await User.findById(auth.userId)
+      .select("_id parentCustomer createdByDelegate")
+      .lean();
+
+    if (!delegateUser || !delegateUser.createdByDelegate) {
+      return {
+        ok: false as const,
+        error:
+          "Your user account is not assigned to a delegate. Please contact partner admin.",
+      };
+    }
+
+    if (String(delegateUser.parentCustomer || "") !== companyId) {
+      return {
+        ok: false as const,
+        error: "Invalid account mapping.",
+      };
+    }
+
+    return {
+      ok: true as const,
+      filter: {
+        customer: companyId,
+        createdBy: auth.userId,
+      } as Record<string, unknown>,
+    };
+  }
+
+  const managedUsers = await User.find({
+    parentCustomer: companyId,
+    createdByDelegate: auth.userId,
+  })
+    .select("_id")
+    .lean();
+
+  const creatorIds = [
+    auth.userId,
+    ...managedUsers.map((member) => String(member._id)),
+  ];
+
+  return {
+    ok: true as const,
+    filter: {
+      customer: companyId,
+      createdBy: { $in: creatorIds },
+    } as Record<string, unknown>,
+  };
 }
 
 type CompanyServiceSelection = {
@@ -513,12 +581,13 @@ export async function GET(req: NextRequest) {
   }
 
   await connectMongo();
-  const requestFilter: { customer: string; createdBy?: string } = { customer: companyId };
-  if (auth.role === "delegate_user") {
-    requestFilter.createdBy = auth.userId;
+
+  const scopedFilter = await buildScopedRequestFilter(auth, companyId);
+  if (!scopedFilter.ok) {
+    return NextResponse.json({ error: scopedFilter.error }, { status: 403 });
   }
 
-  const items = await VerificationRequest.find(requestFilter)
+  const items = await VerificationRequest.find(scopedFilter.filter)
     .sort({ createdAt: -1 })
     .lean();
 
@@ -530,7 +599,14 @@ export async function GET(req: NextRequest) {
           .lean()
       : [];
   const creatorMap = new Map(
-    creators.map((item) => [String(item._id), { name: item.name, role: item.role }]),
+    creators.map((item) => [
+      String(item._id),
+      {
+        name: item.name,
+        role: item.role,
+        createdByDelegate: item.createdByDelegate ? String(item.createdByDelegate) : null,
+      },
+    ]),
   );
 
   const delegateIds = [
@@ -551,15 +627,8 @@ export async function GET(req: NextRequest) {
       : [];
   const delegateMap = new Map(delegates.map((item) => [String(item._id), item.name]));
 
-  const companyDelegates =
-    auth.role === "delegate_user"
-      ? await User.find({ parentCustomer: companyId, role: "delegate" }).select("name").lean()
-      : [];
-  const singleCompanyDelegateName =
-    companyDelegates.length === 1 ? companyDelegates[0].name : null;
-
-  function resolveDelegateName(createdById: string) {
-    const creator = creators.find((item) => String(item._id) === createdById);
+  function resolveDelegateName(item: { createdBy: unknown; createdByDelegate?: unknown }) {
+    const creator = creatorMap.get(String(item.createdBy));
     if (!creator) {
       return "-";
     }
@@ -569,14 +638,19 @@ export async function GET(req: NextRequest) {
     }
 
     if (creator.role === "delegate_user") {
-      if (creator.createdByDelegate) {
-        const parentDelegateName = delegateMap.get(String(creator.createdByDelegate));
+      const requestDelegateId = item.createdByDelegate
+        ? String(item.createdByDelegate)
+        : null;
+      const parentDelegateId = requestDelegateId || creator.createdByDelegate;
+
+      if (parentDelegateId) {
+        const parentDelegateName = delegateMap.get(parentDelegateId);
         if (parentDelegateName) {
           return parentDelegateName;
         }
       }
 
-      return singleCompanyDelegateName ?? "-";
+      return "-";
     }
 
     return "-";
@@ -586,7 +660,7 @@ export async function GET(req: NextRequest) {
     ...item,
     createdByName: creatorMap.get(String(item.createdBy))?.name ?? "Unknown",
     createdByRole: creatorMap.get(String(item.createdBy))?.role ?? "unknown",
-    delegateName: resolveDelegateName(String(item.createdBy)),
+    delegateName: resolveDelegateName(item),
   }));
 
   return NextResponse.json({ items: enriched });
@@ -610,6 +684,31 @@ export async function POST(req: NextRequest) {
   }
 
   await connectMongo();
+
+  let createdByDelegateId: string | null = null;
+
+  if (auth.role === "delegate") {
+    createdByDelegateId = auth.userId;
+  }
+
+  if (auth.role === "delegate_user") {
+    const delegateUser = await User.findById(auth.userId)
+      .select("_id parentCustomer createdByDelegate")
+      .lean();
+
+    if (!delegateUser || !delegateUser.createdByDelegate) {
+      return NextResponse.json(
+        { error: "Your user account is not assigned to a delegate." },
+        { status: 403 },
+      );
+    }
+
+    if (String(delegateUser.parentCustomer || "") !== companyId) {
+      return NextResponse.json({ error: "Invalid account mapping." }, { status: 400 });
+    }
+
+    createdByDelegateId = String(delegateUser.createdByDelegate);
+  }
 
   const companyProfile = await getCompanyProfile(companyId);
   if (!companyProfile) {
@@ -657,6 +756,7 @@ export async function POST(req: NextRequest) {
     candidatePhone: parsed.data.candidatePhone || "",
     customer: companyId,
     createdBy: auth.userId,
+    createdByDelegate: createdByDelegateId,
     candidateUser: candidateAccount.candidateUserId,
     status: "pending",
     candidateFormStatus: "pending",
@@ -715,18 +815,71 @@ export async function PATCH(req: NextRequest) {
 
   const body = await req.json();
 
-  const rejectParsed = rejectCandidateDataSchema.safeParse(body);
-  if (rejectParsed.success) {
-    await connectMongo();
+  await connectMongo();
 
-    const requestFilter: { _id: string; customer: string; createdBy?: string } = {
-      _id: rejectParsed.data.requestId,
-      customer: companyId,
+  const scopedFilter = await buildScopedRequestFilter(auth, companyId);
+  if (!scopedFilter.ok) {
+    return NextResponse.json({ error: scopedFilter.error }, { status: 403 });
+  }
+
+  const partnerDecisionParsed = partnerDecisionSchema.safeParse(body);
+  if (partnerDecisionParsed.success) {
+    const requestFilter: Record<string, unknown> = {
+      ...scopedFilter.filter,
+      _id: partnerDecisionParsed.data.requestId,
     };
 
-    if (auth.role === "delegate_user") {
-      requestFilter.createdBy = auth.userId;
+    const requestDoc = await VerificationRequest.findOne(requestFilter)
+      .select("candidateFormStatus status")
+      .lean();
+
+    if (!requestDoc) {
+      return NextResponse.json({ error: "Request not found." }, { status: 404 });
     }
+
+    if (requestDoc.candidateFormStatus !== "submitted") {
+      return NextResponse.json(
+        { error: "Candidate has not submitted form data yet." },
+        { status: 400 },
+      );
+    }
+
+    if (requestDoc.status === "verified") {
+      return NextResponse.json(
+        { error: "Verified requests cannot be changed from customer portal." },
+        { status: 400 },
+      );
+    }
+
+    if (partnerDecisionParsed.data.action === "partner-approve") {
+      await VerificationRequest.findByIdAndUpdate(partnerDecisionParsed.data.requestId, {
+        status: "approved",
+        candidateFormStatus: "submitted",
+        rejectionNote: "",
+        customerRejectedFields: [],
+      });
+
+      return NextResponse.json({ message: "Request approved by partner." });
+    }
+
+    const trimmedRejectionNote = partnerDecisionParsed.data.rejectionNote.trim();
+
+    await VerificationRequest.findByIdAndUpdate(partnerDecisionParsed.data.requestId, {
+      status: "rejected",
+      candidateFormStatus: "submitted",
+      rejectionNote: trimmedRejectionNote || "Rejected by partner.",
+      customerRejectedFields: [],
+    });
+
+    return NextResponse.json({ message: "Request rejected by partner." });
+  }
+
+  const rejectParsed = rejectCandidateDataSchema.safeParse(body);
+  if (rejectParsed.success) {
+    const requestFilter: Record<string, unknown> = {
+      ...scopedFilter.filter,
+      _id: rejectParsed.data.requestId,
+    };
 
     const requestDoc = await VerificationRequest.findOne(requestFilter).lean();
 
@@ -748,9 +901,9 @@ export async function PATCH(req: NextRequest) {
       );
     }
 
-    if (requestDoc.status === "approved") {
+    if (requestDoc.status === "approved" || requestDoc.status === "verified") {
       return NextResponse.json(
-        { error: "Approved requests cannot be rejected from customer portal." },
+        { error: "Approved or verified requests cannot be rejected from customer portal." },
         { status: 400 },
       );
     }
@@ -761,7 +914,7 @@ export async function PATCH(req: NextRequest) {
         serviceId: string;
         serviceName: string;
         question: string;
-        fieldType: "text" | "long_text" | "number" | "file";
+        fieldType: "text" | "long_text" | "number" | "file" | "date";
       }
     >();
 
@@ -786,7 +939,7 @@ export async function PATCH(req: NextRequest) {
         serviceId: string;
         serviceName: string;
         question: string;
-        fieldType: "text" | "long_text" | "number" | "file";
+        fieldType: "text" | "long_text" | "number" | "file" | "date";
       }
     >();
 
@@ -861,8 +1014,6 @@ export async function PATCH(req: NextRequest) {
     return NextResponse.json({ error: "Invalid candidate details." }, { status: 400 });
   }
 
-  await connectMongo();
-
   const companyProfile = await getCompanyProfile(companyId);
   if (!companyProfile) {
     return NextResponse.json({ error: "Company account not found." }, { status: 404 });
@@ -903,13 +1054,10 @@ export async function PATCH(req: NextRequest) {
     parsed.data.candidateName,
   );
 
-  const existingFilter: { _id: string; customer: string; createdBy?: string } = {
+  const existingFilter: Record<string, unknown> = {
+    ...scopedFilter.filter,
     _id: parsed.data.requestId,
-    customer: companyId,
   };
-  if (auth.role === "delegate_user") {
-    existingFilter.createdBy = auth.userId;
-  }
 
   const existing = await VerificationRequest.findOne(existingFilter).lean();
 

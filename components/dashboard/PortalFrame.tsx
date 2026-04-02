@@ -64,17 +64,24 @@ async function fetchRequestsForNotifications() {
 }
 
 function getCustomerNotificationContent(item: RequestItem) {
+  if (item.status === "verified") {
+    return {
+      title: "Request verified",
+      detail: `${item.candidateName} verification is now verified`,
+    };
+  }
+
   if (item.status === "approved") {
     return {
-      title: "Request approved",
-      detail: `${item.candidateName} verification was approved`,
+      title: "Request approved by partner",
+      detail: `${item.candidateName} verification was approved by partner`,
     };
   }
 
   if (item.status === "rejected") {
     const rejectionReason = item.rejectionNote ? ` - ${item.rejectionNote}` : "";
     return {
-      title: "Request rejected",
+      title: "Request rejected by partner",
       detail: `${item.candidateName}${rejectionReason}`,
     };
   }
@@ -388,7 +395,9 @@ export function PortalFrame({ me, onLogout, title, subtitle, children }: PortalF
                     ) : (
                       unreadNotifications.map((notification) => {
                         const tone =
-                          notification.status === "approved"
+                          notification.status === "verified"
+                            ? { border: "#9DDCCB", background: "#E8F8F3" }
+                            : notification.status === "approved"
                             ? { border: "#BFE8C9", background: "#ECF8EF" }
                             : notification.status === "rejected"
                               ? { border: "#F5C2C7", background: "#FDF2F3" }

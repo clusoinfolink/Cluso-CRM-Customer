@@ -266,7 +266,7 @@ export default function TeamPage() {
           ) : (
             <div className="bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm hover:shadow-md transition-shadow duration-200 flex flex-col h-full">
               <div className="px-5 py-4 border-b border-gray-100 bg-gray-50/50 flex-none">
-                <h2 className="text-base font-semibold text-slate-800 flex items-center gap-2">
+                <h2 style={{ fontSize: "0.98rem", color: "#2D405E", margin: 0, fontWeight: 600, display: "flex", alignItems: "center", gap: "0.4rem" }}>
                   <UserPlus className="w-4 h-4 text-blue-600" />
                   {me.role === "customer" ? "Create Delegate Login" : "Create User Login"}
                 </h2>
@@ -335,7 +335,7 @@ export default function TeamPage() {
           {me.role === "customer" && (
             <div className="bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm hover:shadow-md transition-shadow duration-200 flex flex-col h-full">
               <div className="px-5 py-4 border-b border-gray-100 bg-gray-50/50 flex-none">
-                <h2 className="text-base font-semibold text-slate-800 flex items-center gap-2">
+                <h2 style={{ fontSize: "0.98rem", color: "#2D405E", margin: 0, fontWeight: 600, display: "flex", alignItems: "center", gap: "0.4rem" }}>
                   <UserPlus className="w-4 h-4 text-emerald-600" />
                   Create User (By Admin)
                 </h2>
@@ -424,7 +424,7 @@ export default function TeamPage() {
           {canViewUsers && canEditAccess ? (
             <div className="bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm hover:shadow-md transition-shadow duration-200 flex flex-col h-full">
               <div className="px-5 py-4 border-b border-gray-100 bg-gray-50/50 flex-none">
-                <h2 className="text-base font-semibold text-slate-800 flex items-center gap-2">
+                <h2 style={{ fontSize: "0.98rem", color: "#2D405E", margin: 0, fontWeight: 600, display: "flex", alignItems: "center", gap: "0.4rem" }}>
                   <Shield className="w-4 h-4 text-blue-600" />
                   Modify Team Access
                 </h2>
@@ -546,7 +546,7 @@ export default function TeamPage() {
             <div className="bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm hover:shadow-md transition-shadow duration-200">
               <div className="px-6 py-5 border-b border-gray-100 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <div>
-                  <h2 className="text-lg font-semibold text-slate-800 flex items-center gap-2">
+                  <h2 style={{ fontSize: "0.98rem", color: "#2D405E", margin: 0, fontWeight: 600, display: "flex", alignItems: "center", gap: "0.4rem" }}>
                     <Users className="w-5 h-5 text-blue-600" />
                     Team Roster
                   </h2>
