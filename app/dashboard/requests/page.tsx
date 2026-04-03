@@ -45,6 +45,30 @@ function getPartnerStatusLabel(status: RequestStatus) {
   return status;
 }
 
+function parseRepeatableAnswerValues(rawValue: string, repeatable?: boolean) {
+  if (!repeatable) {
+    return [];
+  }
+
+  const trimmedValue = rawValue.trim();
+  if (!trimmedValue.startsWith("[")) {
+    return [];
+  }
+
+  try {
+    const parsed = JSON.parse(trimmedValue);
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+
+    return parsed
+      .map((entry) => (typeof entry === "string" ? entry.trim() : ""))
+      .filter((entry) => entry.length > 0);
+  } catch {
+    return [];
+  }
+}
+
 function RequestsPageContent() {
   const { me, loading, logout } = usePortalSession();
   const searchParams = useSearchParams();
@@ -438,18 +462,34 @@ function RequestsPageContent() {
                     </thead>
                     <tbody>
                       {serviceResponse.answers.map((answer, answerIndex) => {
+                        const repeatableValues = parseRepeatableAnswerValues(
+                          answer.value,
+                          answer.repeatable,
+                        );
                         const valueText =
                           answer.fieldType === "file"
                             ? answer.fileName || "File uploaded"
-                            : answer.value || "-";
+                            : repeatableValues.length > 0
+                              ? repeatableValues.join(", ")
+                              : answer.value || "-";
 
                         return (
                           <tr key={`${serviceResponse.serviceId}-${answerIndex}`} style={{ borderBottom: "1px solid #F0F3F8" }}>
                             <td style={{ padding: "0.55rem 0.45rem", fontWeight: 600, color: "#2D405E" }}>{answer.question}</td>
                             <td style={{ padding: "0.55rem 0.45rem", color: "#334A67", maxWidth: "300px" }}>
-                              <span style={{ whiteSpace: answer.fieldType === "long_text" ? "pre-wrap" : "normal", wordBreak: "break-word" }}>
-                                {valueText}
-                              </span>
+                              {repeatableValues.length > 0 ? (
+                                <ul style={{ margin: 0, paddingLeft: "1.1rem", display: "grid", gap: "0.2rem" }}>
+                                  {repeatableValues.map((entry, entryIndex) => (
+                                    <li key={`${serviceResponse.serviceId}-${answerIndex}-entry-${entryIndex}`} style={{ whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+                                      {entry}
+                                    </li>
+                                  ))}
+                                </ul>
+                              ) : (
+                                <span style={{ whiteSpace: answer.fieldType === "long_text" ? "pre-wrap" : "normal", wordBreak: "break-word" }}>
+                                  {valueText}
+                                </span>
+                              )}
                             </td>
                             <td style={{ padding: "0.55rem 0.45rem" }}>
                               {answer.fieldType === "file" && answer.fileData ? (
@@ -882,10 +922,16 @@ function RequestsPageContent() {
                         serviceResponse.answers.map((answer, answerIndex) => {
                           const fieldKey = buildRejectedFieldKey(serviceResponse.serviceId, answer.question);
                           const isChecked = selectedRejectedFieldKeys.includes(fieldKey);
+                          const repeatableValues = parseRepeatableAnswerValues(
+                            answer.value,
+                            answer.repeatable,
+                          );
                           const answerPreview =
                             answer.fieldType === "file"
                               ? answer.fileName || "File uploaded"
-                              : answer.value || "-";
+                              : repeatableValues.length > 0
+                                ? repeatableValues.join(" | ")
+                                : answer.value || "-";
 
                           return (
                             <label

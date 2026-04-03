@@ -74,6 +74,7 @@ const VerificationRequestSchema = new Schema(
               required: true,
             },
             required: { type: Boolean, default: false },
+            repeatable: { type: Boolean, default: false },
             value: { type: String, default: "" },
             fileName: { type: String, default: "" },
             fileMimeType: { type: String, default: "" },
@@ -116,7 +117,8 @@ if (
     !models.VerificationRequest.schema.path("createdByDelegate") ||
     !models.VerificationRequest.schema.path("candidateUser") ||
     !models.VerificationRequest.schema.path("candidateFormResponses.answers.fileData") ||
-    !models.VerificationRequest.schema.path("candidateFormResponses.answers.required"))
+    !models.VerificationRequest.schema.path("candidateFormResponses.answers.required") ||
+    !models.VerificationRequest.schema.path("candidateFormResponses.answers.repeatable"))
 ) {
   delete models.VerificationRequest;
 }
