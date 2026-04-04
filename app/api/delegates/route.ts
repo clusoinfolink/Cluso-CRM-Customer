@@ -169,7 +169,7 @@ export async function PATCH(req: NextRequest) {
 
     if (auth.role !== "customer") {
       return NextResponse.json(
-        { error: "Only partner account can edit team access." },
+        { error: "Only enterprise account can edit team access." },
         { status: 403 },
       );
     }

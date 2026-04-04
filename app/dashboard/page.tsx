@@ -66,8 +66,8 @@ export default function DashboardOverviewPage() {
   const rejectedCount = items.filter((item) => item.status === "rejected").length;
   const cards: CountCard[] = [
     { label: "Pending", value: pendingCount, tone: "portal-stat-sky", icon: ClipboardPlus, href: "/dashboard/requests" },
-    { label: "Approved By Partner", value: approvedCount, tone: "portal-stat-emerald", icon: BadgeCheck, href: "/dashboard/requests" },
-    { label: "Rejected By Partner", value: rejectedCount, tone: "portal-stat-rose", icon: TriangleAlert, href: "/dashboard/requests" },
+    { label: "Approved By Enterprise", value: approvedCount, tone: "portal-stat-emerald", icon: BadgeCheck, href: "/dashboard/requests" },
+    { label: "Rejected By Enterprise", value: rejectedCount, tone: "portal-stat-rose", icon: TriangleAlert, href: "/dashboard/requests" },
     { label: "Verified", value: verifiedCount, tone: "portal-stat-sky", icon: ShieldCheck, href: "/dashboard/requests" },
     { label: "Total", value: items.length, tone: "portal-stat-violet", icon: Layers3, href: "/dashboard/requests" },
   ];
@@ -76,7 +76,7 @@ export default function DashboardOverviewPage() {
     <PortalFrame
       me={me}
       onLogout={logout}
-      title="Partner Overview"
+      title="Enterprise Overview"
       subtitle="Use quick actions to complete one task at a time with less clutter."
     >
       {rejectedCount > 0 ? (
@@ -129,7 +129,7 @@ export default function DashboardOverviewPage() {
             </span>
             <strong>Review Requests</strong>
           </div>
-          <p className="block-subtitle">Track pending, partner decisions, and verified items with a focused request view.</p>
+          <p className="block-subtitle">Track pending, enterprise decisions, and verified items with a focused request view.</p>
           <span className="quick-action-link">
             Open Requests
             <ArrowRight size={14} />

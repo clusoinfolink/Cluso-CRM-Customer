@@ -29,13 +29,91 @@ function parseRejectedFieldKey(fieldKey: string) {
   return { serviceId, question };
 }
 
-function getPartnerStatusLabel(status: RequestStatus) {
+function toLocalDateKey(value?: string | null) {
+  if (!value) {
+    return "";
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "";
+  }
+
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+const ENTERPRISE_REJECTION_WINDOW_MS = 10 * 60 * 1000;
+
+function normalizeTimestamp(value?: string | null) {
+  if (!value) {
+    return null;
+  }
+
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return null;
+  }
+
+  return parsed;
+}
+
+function getEnterpriseDecisionWindow(item: RequestItem, nowMs: number) {
+  if (item.status !== "approved") {
+    return {
+      isLocked: false,
+      remainingMs: 0,
+    };
+  }
+
+  if (item.enterpriseDecisionLocked || item.enterpriseDecisionLockedAt) {
+    return {
+      isLocked: true,
+      remainingMs: 0,
+    };
+  }
+
+  const approvedAt = normalizeTimestamp(item.enterpriseApprovedAt);
+  if (!approvedAt) {
+    return {
+      isLocked: true,
+      remainingMs: 0,
+    };
+  }
+
+  const elapsedMs = nowMs - approvedAt.getTime();
+  if (elapsedMs >= ENTERPRISE_REJECTION_WINDOW_MS) {
+    return {
+      isLocked: true,
+      remainingMs: 0,
+    };
+  }
+
+  return {
+    isLocked: false,
+    remainingMs: Math.max(0, ENTERPRISE_REJECTION_WINDOW_MS - elapsedMs),
+  };
+}
+
+function formatRemainingWindow(ms: number) {
+  const safeMs = Math.max(0, ms);
+  const totalSeconds = Math.floor(safeMs / 1000);
+  const minutes = Math.floor(totalSeconds / 60)
+    .toString()
+    .padStart(2, "0");
+  const seconds = (totalSeconds % 60).toString().padStart(2, "0");
+  return `${minutes}:${seconds}`;
+}
+
+function getEnterpriseStatusLabel(status: RequestStatus) {
   if (status === "approved") {
-    return "approved by partner";
+    return "approved by enterprise";
   }
 
   if (status === "rejected") {
-    return "rejected by partner";
+    return "rejected by enterprise";
   }
 
   if (status === "verified") {
@@ -75,6 +153,9 @@ function RequestsPageContent() {
   const { items, loading: requestsLoading, refreshRequests } = useRequestsData();
   const [requestsReady, setRequestsReady] = useState(false);
   const [searchText, setSearchText] = useState("");
+  const [createdDateFrom, setCreatedDateFrom] = useState("");
+  const [createdDateTo, setCreatedDateTo] = useState("");
+  const [quickFilter, setQuickFilter] = useState<"all" | RequestStatus | "forms">("all");
   const [message, setMessage] = useState("");
   const [highlightedRequestId, setHighlightedRequestId] = useState("");
   const [selectedActionRowId, setSelectedActionRowId] = useState("");
@@ -90,6 +171,7 @@ function RequestsPageContent() {
   const [editCandidateEmail, setEditCandidateEmail] = useState("");
   const [editCandidatePhone, setEditCandidatePhone] = useState("");
   const [editSelectedServiceIds, setEditSelectedServiceIds] = useState<string[]>([]);
+  const [nowMs, setNowMs] = useState(() => Date.now());
 
   const focusRequestId = searchParams.get("requestId")?.trim() ?? "";
 
@@ -114,33 +196,68 @@ function RequestsPageContent() {
 
   const normalizedSearch = searchText.trim().toLowerCase();
 
-  const filteredRequests = useMemo(() => {
+  const baseFilteredRequests = useMemo(() => {
     return items.filter((item) => {
-      if (!normalizedSearch) {
-        return true;
+      const itemCreatedDate = toLocalDateKey(item.createdAt);
+
+      if (normalizedSearch) {
+        const searchable = [
+          item.candidateName,
+          item.candidateEmail,
+          item.candidatePhone,
+          item.status,
+          item.rejectionNote,
+          item.createdByName,
+          item.delegateName,
+          itemCreatedDate,
+          (item.selectedServices ?? []).map((service) => service.serviceName).join(" "),
+        ]
+          .join(" ")
+          .toLowerCase();
+
+        if (!searchable.includes(normalizedSearch)) {
+          return false;
+        }
       }
 
-      const searchable = [
-        item.candidateName,
-        item.candidateEmail,
-        item.candidatePhone,
-        item.status,
-        item.rejectionNote,
-        item.createdByName,
-        item.delegateName,
-        (item.selectedServices ?? []).map((service) => service.serviceName).join(" "),
-      ]
-        .join(" ")
-        .toLowerCase();
+      if (createdDateFrom && (!itemCreatedDate || itemCreatedDate < createdDateFrom)) {
+        return false;
+      }
 
-      return searchable.includes(normalizedSearch);
+      if (createdDateTo && (!itemCreatedDate || itemCreatedDate > createdDateTo)) {
+        return false;
+      }
+
+      return true;
     });
-  }, [items, normalizedSearch]);
+  }, [items, normalizedSearch, createdDateFrom, createdDateTo]);
 
-  const pendingRequests = filteredRequests.filter((item) => item.status === "pending");
-  const approvedRequests = filteredRequests.filter((item) => item.status === "approved");
-  const verifiedRequests = filteredRequests.filter((item) => item.status === "verified");
-  const rejectedRequests = filteredRequests.filter((item) => item.status === "rejected");
+  const requestCounts = useMemo(
+    () => ({
+      pending: baseFilteredRequests.filter((item) => item.status === "pending").length,
+      approved: baseFilteredRequests.filter((item) => item.status === "approved").length,
+      verified: baseFilteredRequests.filter((item) => item.status === "verified").length,
+      rejected: baseFilteredRequests.filter((item) => item.status === "rejected").length,
+      forms: baseFilteredRequests.filter((item) => item.candidateFormStatus === "submitted").length,
+    }),
+    [baseFilteredRequests],
+  );
+
+  const filteredRequests = useMemo(() => {
+    if (quickFilter === "all") {
+      return baseFilteredRequests;
+    }
+
+    if (quickFilter === "forms") {
+      return baseFilteredRequests.filter((item) => item.candidateFormStatus === "submitted");
+    }
+
+    return baseFilteredRequests.filter((item) => item.status === quickFilter);
+  }, [baseFilteredRequests, quickFilter]);
+
+  function toggleQuickFilter(nextFilter: "all" | RequestStatus | "forms") {
+    setQuickFilter((current) => (current === nextFilter ? "all" : nextFilter));
+  }
 
   useEffect(() => {
     if (!focusRequestId || items.length === 0) {
@@ -154,6 +271,9 @@ function RequestsPageContent() {
 
     const stateUpdateTimer = window.setTimeout(() => {
       setSearchText("");
+      setCreatedDateFrom("");
+      setCreatedDateTo("");
+      setQuickFilter("all");
       setHighlightedRequestId(focusRequestId);
     }, 0);
 
@@ -174,6 +294,24 @@ function RequestsPageContent() {
     () => items.find((item) => item._id === activeResponseRequestId) ?? null,
     [activeResponseRequestId, items],
   );
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setNowMs(Date.now());
+    }, 1000);
+
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, []);
+
+  const activeDecisionWindow = useMemo(() => {
+    if (!activeResponseRequest) {
+      return null;
+    }
+
+    return getEnterpriseDecisionWindow(activeResponseRequest, nowMs);
+  }, [activeResponseRequest, nowMs]);
 
   function closeResponseModal() {
     setActiveResponseRequestId("");
@@ -207,6 +345,14 @@ function RequestsPageContent() {
 
   async function submitSelectedFieldRejection() {
     if (!activeResponseRequest) {
+      return;
+    }
+
+    const decisionWindow = getEnterpriseDecisionWindow(activeResponseRequest, Date.now());
+    if (decisionWindow.isLocked) {
+      setMessage(
+        "Rejection window expired. This approved request is locked for enterprise corrections.",
+      );
       return;
     }
 
@@ -246,7 +392,7 @@ function RequestsPageContent() {
     await refreshRequests();
   }
 
-  async function submitPartnerDecision(action: "partner-approve" | "partner-reject") {
+  async function submitEnterpriseDecision(action: "enterprise-approve" | "enterprise-reject") {
     if (!activeResponseRequest) {
       return;
     }
@@ -257,11 +403,24 @@ function RequestsPageContent() {
     }
 
     if (activeResponseRequest.status === "verified") {
-      setMessage("Verified requests cannot be changed from customer portal.");
+      setMessage("Verified requests cannot be changed from enterprise portal.");
       return;
     }
 
-    if (action === "partner-approve") {
+    const decisionWindow = getEnterpriseDecisionWindow(activeResponseRequest, Date.now());
+    if (action === "enterprise-reject" && decisionWindow.isLocked) {
+      setMessage(
+        "Rejection window expired. This approved request is locked and handed off for verification.",
+      );
+      return;
+    }
+
+    if (action === "enterprise-approve" && activeResponseRequest.status === "approved") {
+      setMessage("This request is already approved by enterprise.");
+      return;
+    }
+
+    if (action === "enterprise-approve") {
       const isConfirmed = window.confirm("Confirm approve this request?");
       if (!isConfirmed) {
         return;
@@ -269,10 +428,10 @@ function RequestsPageContent() {
     }
 
     let rejectionNote = "";
-    if (action === "partner-reject") {
+    if (action === "enterprise-reject") {
       const note = window.prompt(
         "Optional rejection note for the team:",
-        "Rejected by partner.",
+        "Rejected by enterprise.",
       );
 
       if (note === null) {
@@ -530,12 +689,7 @@ function RequestsPageContent() {
     );
   }
 
-  function renderRequestSection(
-    title: string,
-    itemsByStatus: RequestItem[],
-    statusType: RequestStatus,
-    emptyMessage: string,
-  ) {
+  function renderRequestSection(title: string, itemsByStatus: RequestItem[], emptyMessage: string) {
     return (
       <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden mb-6">
         <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
@@ -570,10 +724,11 @@ function RequestsPageContent() {
                   const hasResponses = Boolean(item.candidateFormResponses && item.candidateFormResponses.length > 0);
                   const formSubmitted = item.candidateFormStatus === "submitted";
                   const isActionRowActive = selectedActionRowId === item._id;
+                  const decisionWindow = getEnterpriseDecisionWindow(item, nowMs);
 
                   return (
                     <tr
-                      key={`${statusType}-${item._id}`}
+                      key={item._id}
                       id={`request-${item._id}`}
                       onClick={() => setSelectedActionRowId(item._id)}
                       className={`transition-colors cursor-pointer ${
@@ -612,7 +767,7 @@ function RequestsPageContent() {
                             item.status === 'rejected' ? 'bg-red-100 text-red-700 border border-red-200' :
                             'bg-yellow-100 text-yellow-700 border border-yellow-200'
                           }`}>
-                            {getPartnerStatusLabel(item.status)}
+                            {getEnterpriseStatusLabel(item.status)}
                           </span>
                         </div>
                         <div className="mt-1.5 flex items-center gap-1.5 text-xs font-medium">
@@ -625,6 +780,13 @@ function RequestsPageContent() {
                           <div className="mt-2 text-xs text-red-600 font-medium max-w-[180px] whitespace-normal">
                              <strong className="text-red-700 block">Review Note:</strong>
                              {item.rejectionNote}
+                          </div>
+                        )}
+                        {item.status === "approved" && (
+                          <div className="mt-2 text-xs font-semibold text-slate-600">
+                            {decisionWindow.isLocked
+                              ? "Decision lock: active"
+                              : `Reject window: ${formatRemainingWindow(decisionWindow.remainingMs)}`}
                           </div>
                         )}
                       </td>
@@ -672,7 +834,7 @@ function RequestsPageContent() {
                              {hasResponses ? "Review Data" : "No Data Yet"}
                            </button>
 
-                           {statusType === "rejected" && (
+                           {item.status === "rejected" && (
                              <button
                                className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all shadow-sm ${
                                  isActionRowActive
@@ -797,7 +959,7 @@ function RequestsPageContent() {
               </span>
             </div>
             <p className="text-slate-500 text-sm mt-1 md:ml-11">
-              Search and monitor requests across pending, partner-approved, rejected, and verified states.
+              Search and monitor requests across pending, enterprise-approved, rejected, and verified states.
             </p>
           </div>
 
@@ -814,13 +976,148 @@ function RequestsPageContent() {
             />
           </div>
         </div>
+
+        <div className="border-t border-slate-100 px-4 lg:px-6 py-4 bg-slate-50/70">
+          <div className="flex flex-col gap-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setQuickFilter("all")}
+                className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold border transition-colors ${
+                  quickFilter === "all"
+                    ? "bg-slate-800 text-white border-slate-800"
+                    : "bg-white text-slate-700 border-slate-300 hover:bg-slate-100"
+                }`}
+              >
+                All
+                <span className={`px-1.5 py-0.5 rounded-full text-[11px] ${quickFilter === "all" ? "bg-slate-700 text-white" : "bg-slate-100 text-slate-600"}`}>
+                  {baseFilteredRequests.length}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => toggleQuickFilter("pending")}
+                className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold border transition-colors ${
+                  quickFilter === "pending"
+                    ? "bg-amber-600 text-white border-amber-600"
+                    : "bg-white text-slate-700 border-slate-300 hover:bg-slate-100"
+                }`}
+              >
+                Pending
+                <span className={`px-1.5 py-0.5 rounded-full text-[11px] ${quickFilter === "pending" ? "bg-amber-500 text-white" : "bg-slate-100 text-slate-600"}`}>
+                  {requestCounts.pending}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => toggleQuickFilter("approved")}
+                className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold border transition-colors ${
+                  quickFilter === "approved"
+                    ? "bg-green-600 text-white border-green-600"
+                    : "bg-white text-slate-700 border-slate-300 hover:bg-slate-100"
+                }`}
+              >
+                Approved
+                <span className={`px-1.5 py-0.5 rounded-full text-[11px] ${quickFilter === "approved" ? "bg-green-500 text-white" : "bg-slate-100 text-slate-600"}`}>
+                  {requestCounts.approved}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => toggleQuickFilter("verified")}
+                className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold border transition-colors ${
+                  quickFilter === "verified"
+                    ? "bg-emerald-700 text-white border-emerald-700"
+                    : "bg-white text-slate-700 border-slate-300 hover:bg-slate-100"
+                }`}
+              >
+                Verified
+                <span className={`px-1.5 py-0.5 rounded-full text-[11px] ${quickFilter === "verified" ? "bg-emerald-600 text-white" : "bg-slate-100 text-slate-600"}`}>
+                  {requestCounts.verified}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => toggleQuickFilter("rejected")}
+                className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold border transition-colors ${
+                  quickFilter === "rejected"
+                    ? "bg-rose-700 text-white border-rose-700"
+                    : "bg-white text-slate-700 border-slate-300 hover:bg-slate-100"
+                }`}
+              >
+                Rejected
+                <span className={`px-1.5 py-0.5 rounded-full text-[11px] ${quickFilter === "rejected" ? "bg-rose-600 text-white" : "bg-slate-100 text-slate-600"}`}>
+                  {requestCounts.rejected}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => toggleQuickFilter("forms")}
+                className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold border transition-colors ${
+                  quickFilter === "forms"
+                    ? "bg-blue-700 text-white border-blue-700"
+                    : "bg-white text-slate-700 border-slate-300 hover:bg-slate-100"
+                }`}
+              >
+                Forms Submitted
+                <span className={`px-1.5 py-0.5 rounded-full text-[11px] ${quickFilter === "forms" ? "bg-blue-600 text-white" : "bg-slate-100 text-slate-600"}`}>
+                  {requestCounts.forms}
+                </span>
+              </button>
+            </div>
+
+            <div className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4">
+              <label className="flex items-center gap-2 text-sm text-slate-600">
+                <span className="font-medium">Created from</span>
+                <input
+                  type="date"
+                  className="px-3 py-1.5 bg-white border border-slate-300 rounded-md text-sm text-slate-700 focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                  value={createdDateFrom}
+                  max={createdDateTo || undefined}
+                  onChange={(e) => setCreatedDateFrom(e.target.value)}
+                />
+              </label>
+
+              <label className="flex items-center gap-2 text-sm text-slate-600">
+                <span className="font-medium">Created to</span>
+                <input
+                  type="date"
+                  className="px-3 py-1.5 bg-white border border-slate-300 rounded-md text-sm text-slate-700 focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                  value={createdDateTo}
+                  min={createdDateFrom || undefined}
+                  onChange={(e) => setCreatedDateTo(e.target.value)}
+                />
+              </label>
+
+              <button
+                type="button"
+                className="px-3 py-1.5 rounded-md border border-slate-300 text-slate-700 bg-white text-xs font-semibold hover:bg-slate-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                onClick={() => {
+                  setSearchText("");
+                  setCreatedDateFrom("");
+                  setCreatedDateTo("");
+                  setQuickFilter("all");
+                }}
+                disabled={!searchText && !createdDateFrom && !createdDateTo && quickFilter === "all"}
+              >
+                Clear filters
+              </button>
+
+              <span className="text-xs text-slate-500">
+                Showing {filteredRequests.length} request{filteredRequests.length === 1 ? "" : "s"}
+              </span>
+            </div>
+          </div>
+        </div>
       </BlockCard>
 
       <div className="flex flex-col gap-6">
-        {renderRequestSection("Pending Requests", pendingRequests, "pending", "No pending requests currently actively waiting.")}
-        {renderRequestSection("Approved By Partner", approvedRequests, "approved", "No partner-approved requests found.")}
-        {renderRequestSection("Verified Requests", verifiedRequests, "verified", "No verified requests found.")}
-        {renderRequestSection("Rejected By Partner", rejectedRequests, "rejected", "No partner-rejected requests requiring action.")}
+        {renderRequestSection("All Requests", filteredRequests, "No requests found for the selected filters.")}
       </div>
 
       {activeResponseRequest ? (
@@ -841,6 +1138,13 @@ function RequestsPageContent() {
                   <span className={`w-1.5 h-1.5 rounded-full ${activeResponseRequest.candidateFormStatus === "submitted" ? "bg-green-500" : "bg-orange-400"}`}></span>
                   Status: {activeResponseRequest.candidateFormStatus === "submitted" ? "Submitted" : "Pending"}
                 </p>
+                {activeResponseRequest.status === "approved" && activeDecisionWindow ? (
+                  <p className="mt-1 text-sm font-semibold text-slate-500 whitespace-normal">
+                    {activeDecisionWindow.isLocked
+                      ? "Enterprise decision window is locked. Request is now with verification team."
+                      : `Enterprise reject window closes in ${formatRemainingWindow(activeDecisionWindow.remainingMs)}.`}
+                  </p>
+                ) : null}
               </div>
               <button
                 type="button"
@@ -859,10 +1163,11 @@ function RequestsPageContent() {
               <button
                 type="button"
                 className="w-full sm:w-auto px-4 py-2 bg-green-600 text-white font-semibold rounded-lg hover:-translate-y-0.5 hover:bg-green-700 active:translate-y-0 active:scale-[0.98] active:bg-green-800 transition-all duration-200 focus:ring-2 focus:ring-green-200 disabled:opacity-50 disabled:cursor-not-allowed"
-                onClick={() => submitPartnerDecision("partner-approve")}
+                onClick={() => submitEnterpriseDecision("enterprise-approve")}
                 disabled={Boolean(
                   decisioningRequestId === activeResponseRequest._id ||
                     activeResponseRequest.candidateFormStatus !== "submitted" ||
+                    activeResponseRequest.status === "approved" ||
                     activeResponseRequest.status === "verified",
                 )}
               >
@@ -872,10 +1177,11 @@ function RequestsPageContent() {
               <button
                 type="button"
                 className="w-full sm:w-auto px-4 py-2 bg-red-600 text-white font-semibold rounded-lg hover:-translate-y-0.5 hover:bg-red-700 active:translate-y-0 active:scale-[0.98] active:bg-red-800 transition-all duration-200 focus:ring-2 focus:ring-red-200 disabled:opacity-50 disabled:cursor-not-allowed"
-                onClick={() => submitPartnerDecision("partner-reject")}
+                onClick={() => submitEnterpriseDecision("enterprise-reject")}
                 disabled={Boolean(
                   decisioningRequestId === activeResponseRequest._id ||
                     activeResponseRequest.candidateFormStatus !== "submitted" ||
+                    (activeResponseRequest.status === "approved" && activeDecisionWindow?.isLocked) ||
                     activeResponseRequest.status === "verified",
                 )}
               >
@@ -890,6 +1196,7 @@ function RequestsPageContent() {
                   decisioningRequestId === activeResponseRequest._id ||
                   !activeResponseRequest.candidateFormResponses ||
                     activeResponseRequest.candidateFormResponses.length === 0 ||
+                    (activeResponseRequest.status === "approved" && activeDecisionWindow?.isLocked) ||
                     activeResponseRequest.status === "verified",
                 )}
               >

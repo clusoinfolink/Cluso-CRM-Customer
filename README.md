@@ -1,4 +1,4 @@
-# Cluso Customer (New Isolated Starter)
+# Cluso Enterprise (New Isolated Starter)
 
 This app is intentionally isolated under `cluso-new-suite` so it does not clash with your current portals.
 

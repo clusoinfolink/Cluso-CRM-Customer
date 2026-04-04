@@ -82,6 +82,47 @@ export type PartnerProfileResponse = {
 
 export type RequestStatus = "pending" | "approved" | "rejected" | "verified";
 
+export type ServiceVerificationStatus = "pending" | "verified" | "unverified";
+
+export type ServiceVerificationAttempt = {
+  status: Exclude<ServiceVerificationStatus, "pending">;
+  verificationMode: string;
+  comment: string;
+  attemptedAt: string;
+  verifierId?: string | null;
+  verifierName?: string;
+  managerId?: string | null;
+  managerName?: string;
+};
+
+export type ServiceVerification = {
+  serviceId: string;
+  serviceName: string;
+  status: ServiceVerificationStatus;
+  verificationMode: string;
+  comment: string;
+  attempts: ServiceVerificationAttempt[];
+};
+
+export type ReportMetadata = {
+  generatedAt?: string | null;
+  generatedBy?: string | null;
+  generatedByName?: string;
+  reportNumber?: string;
+};
+
+export type InvoiceSnapshot = {
+  currency: SupportedCurrency;
+  subtotal: number;
+  items: Array<{
+    serviceId: string;
+    serviceName: string;
+    price: number;
+  }>;
+  billingEmail?: string;
+  companyName?: string;
+};
+
 export type CandidateAnswer = {
   question: string;
   fieldType: "text" | "long_text" | "number" | "file" | "date";
@@ -118,9 +159,17 @@ export type RequestItem = {
   status: RequestStatus;
   candidateFormStatus?: "pending" | "submitted";
   candidateSubmittedAt?: string | null;
+  enterpriseApprovedAt?: string | null;
+  enterpriseDecisionLockedAt?: string | null;
+  enterpriseDecisionLocked?: boolean;
+  enterpriseDecisionRemainingMs?: number;
   rejectionNote: string;
   createdAt: string;
   selectedServices?: ServiceOption[];
+  serviceVerifications?: ServiceVerification[];
+  reportMetadata?: ReportMetadata;
+  reportData?: Record<string, unknown> | null;
+  invoiceSnapshot?: InvoiceSnapshot | null;
   candidateFormResponses?: CandidateServiceResponse[];
   customerRejectedFields?: RejectedCandidateField[];
 };

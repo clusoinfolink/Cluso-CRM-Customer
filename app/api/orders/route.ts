@@ -37,11 +37,88 @@ const rejectCandidateDataSchema = z.object({
   rejectionComment: z.string().trim().max(500).optional().default(""),
 });
 
-const partnerDecisionSchema = z.object({
-  action: z.enum(["partner-approve", "partner-reject"]),
+const enterpriseDecisionSchema = z.object({
+  action: z.enum(["enterprise-approve", "enterprise-reject"]),
   requestId: z.string().min(1),
   rejectionNote: z.string().trim().max(500).optional().default(""),
 });
+
+const ENTERPRISE_REJECTION_WINDOW_MS = 10 * 60 * 1000;
+
+function normalizeDateValue(value: unknown) {
+  if (!value) {
+    return null;
+  }
+
+  const parsedDate = value instanceof Date ? value : new Date(String(value));
+  if (Number.isNaN(parsedDate.getTime())) {
+    return null;
+  }
+
+  return parsedDate;
+}
+
+function getEnterpriseDecisionWindowState(requestDoc: {
+  status?: unknown;
+  enterpriseApprovedAt?: unknown;
+  enterpriseDecisionLockedAt?: unknown;
+  updatedAt?: unknown;
+}) {
+  const status = String(requestDoc.status ?? "");
+  if (status !== "approved") {
+    return {
+      approvedAt: null,
+      lockedAt: null,
+      remainingMs: 0,
+      isLocked: false,
+      shouldLockNow: false,
+    };
+  }
+
+  const approvedAt =
+    normalizeDateValue(requestDoc.enterpriseApprovedAt) ??
+    normalizeDateValue(requestDoc.updatedAt);
+  const lockedAt = normalizeDateValue(requestDoc.enterpriseDecisionLockedAt);
+
+  if (lockedAt) {
+    return {
+      approvedAt,
+      lockedAt,
+      remainingMs: 0,
+      isLocked: true,
+      shouldLockNow: false,
+    };
+  }
+
+  if (!approvedAt) {
+    return {
+      approvedAt: null,
+      lockedAt: null,
+      remainingMs: 0,
+      isLocked: true,
+      shouldLockNow: true,
+    };
+  }
+
+  const elapsedMs = Date.now() - approvedAt.getTime();
+  if (elapsedMs >= ENTERPRISE_REJECTION_WINDOW_MS) {
+    return {
+      approvedAt,
+      lockedAt: null,
+      remainingMs: 0,
+      isLocked: true,
+      shouldLockNow: true,
+    };
+  }
+
+  return {
+    approvedAt,
+    lockedAt: null,
+    remainingMs: Math.max(0, ENTERPRISE_REJECTION_WINDOW_MS - elapsedMs),
+    isLocked: false,
+    shouldLockNow: false,
+  };
+}
 
 function companyIdFromAuth(auth: {
   userId: string;
@@ -72,7 +149,7 @@ async function buildScopedRequestFilter(auth: {
       return {
         ok: false as const,
         error:
-          "Your user account is not assigned to a delegate. Please contact partner admin.",
+          "Your user account is not assigned to a delegate. Please contact enterprise admin.",
       };
     }
 
@@ -587,6 +664,32 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: scopedFilter.error }, { status: 403 });
   }
 
+  const lockCutoff = new Date(Date.now() - ENTERPRISE_REJECTION_WINDOW_MS);
+  await VerificationRequest.updateMany(
+    {
+      ...scopedFilter.filter,
+      status: "approved",
+      enterpriseDecisionLockedAt: null,
+      $or: [
+        {
+          enterpriseApprovedAt: {
+            $type: "date",
+            $lte: lockCutoff,
+          },
+        },
+        {
+          enterpriseApprovedAt: null,
+          updatedAt: {
+            $lte: lockCutoff,
+          },
+        },
+      ],
+    },
+    {
+      $set: { enterpriseDecisionLockedAt: new Date() },
+    },
+  );
+
   const items = await VerificationRequest.find(scopedFilter.filter)
     .sort({ createdAt: -1 })
     .lean();
@@ -656,12 +759,21 @@ export async function GET(req: NextRequest) {
     return "-";
   }
 
-  const enriched = items.map((item) => ({
-    ...item,
-    createdByName: creatorMap.get(String(item.createdBy))?.name ?? "Unknown",
-    createdByRole: creatorMap.get(String(item.createdBy))?.role ?? "unknown",
-    delegateName: resolveDelegateName(item),
-  }));
+  const enriched = items.map((item) => {
+    const decisionState = getEnterpriseDecisionWindowState(item);
+
+    return {
+      ...item,
+      createdByName: creatorMap.get(String(item.createdBy))?.name ?? "Unknown",
+      createdByRole: creatorMap.get(String(item.createdBy))?.role ?? "unknown",
+      delegateName: resolveDelegateName(item),
+      enterpriseApprovedAt: decisionState.approvedAt ?? item.enterpriseApprovedAt ?? null,
+      enterpriseDecisionLockedAt:
+        decisionState.lockedAt ?? item.enterpriseDecisionLockedAt ?? null,
+      enterpriseDecisionLocked: decisionState.isLocked,
+      enterpriseDecisionRemainingMs: decisionState.remainingMs,
+    };
+  });
 
   return NextResponse.json({ items: enriched });
 }
@@ -822,15 +934,17 @@ export async function PATCH(req: NextRequest) {
     return NextResponse.json({ error: scopedFilter.error }, { status: 403 });
   }
 
-  const partnerDecisionParsed = partnerDecisionSchema.safeParse(body);
-  if (partnerDecisionParsed.success) {
+  const enterpriseDecisionParsed = enterpriseDecisionSchema.safeParse(body);
+  if (enterpriseDecisionParsed.success) {
     const requestFilter: Record<string, unknown> = {
       ...scopedFilter.filter,
-      _id: partnerDecisionParsed.data.requestId,
+      _id: enterpriseDecisionParsed.data.requestId,
     };
 
     const requestDoc = await VerificationRequest.findOne(requestFilter)
-      .select("candidateFormStatus status")
+      .select(
+        "candidateFormStatus status enterpriseApprovedAt enterpriseDecisionLockedAt updatedAt",
+      )
       .lean();
 
     if (!requestDoc) {
@@ -846,32 +960,60 @@ export async function PATCH(req: NextRequest) {
 
     if (requestDoc.status === "verified") {
       return NextResponse.json(
-        { error: "Verified requests cannot be changed from customer portal." },
+        { error: "Verified requests cannot be changed from enterprise portal." },
         { status: 400 },
       );
     }
 
-    if (partnerDecisionParsed.data.action === "partner-approve") {
-      await VerificationRequest.findByIdAndUpdate(partnerDecisionParsed.data.requestId, {
+    const decisionWindow = getEnterpriseDecisionWindowState(requestDoc);
+    if (
+      enterpriseDecisionParsed.data.action === "enterprise-reject" &&
+      decisionWindow.isLocked
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "This request is locked. Enterprise rejection is only allowed within 10 minutes of approval.",
+        },
+        { status: 400 },
+      );
+    }
+
+    if (
+      enterpriseDecisionParsed.data.action === "enterprise-approve" &&
+      requestDoc.status === "approved"
+    ) {
+      return NextResponse.json(
+        { error: "This request is already approved by enterprise." },
+        { status: 400 },
+      );
+    }
+
+    if (enterpriseDecisionParsed.data.action === "enterprise-approve") {
+      await VerificationRequest.findByIdAndUpdate(enterpriseDecisionParsed.data.requestId, {
         status: "approved",
         candidateFormStatus: "submitted",
         rejectionNote: "",
         customerRejectedFields: [],
+        enterpriseApprovedAt: new Date(),
+        enterpriseDecisionLockedAt: null,
       });
 
-      return NextResponse.json({ message: "Request approved by partner." });
+      return NextResponse.json({ message: "Request approved by enterprise." });
     }
 
-    const trimmedRejectionNote = partnerDecisionParsed.data.rejectionNote.trim();
+    const trimmedRejectionNote = enterpriseDecisionParsed.data.rejectionNote.trim();
 
-    await VerificationRequest.findByIdAndUpdate(partnerDecisionParsed.data.requestId, {
+    await VerificationRequest.findByIdAndUpdate(enterpriseDecisionParsed.data.requestId, {
       status: "rejected",
       candidateFormStatus: "submitted",
-      rejectionNote: trimmedRejectionNote || "Rejected by partner.",
+      rejectionNote: trimmedRejectionNote || "Rejected by enterprise.",
       customerRejectedFields: [],
+      enterpriseApprovedAt: null,
+      enterpriseDecisionLockedAt: null,
     });
 
-    return NextResponse.json({ message: "Request rejected by partner." });
+    return NextResponse.json({ message: "Request rejected by enterprise." });
   }
 
   const rejectParsed = rejectCandidateDataSchema.safeParse(body);
@@ -881,7 +1023,11 @@ export async function PATCH(req: NextRequest) {
       _id: rejectParsed.data.requestId,
     };
 
-    const requestDoc = await VerificationRequest.findOne(requestFilter).lean();
+    const requestDoc = await VerificationRequest.findOne(requestFilter)
+      .select(
+        "candidateName candidateEmail candidateFormStatus status candidateFormResponses enterpriseApprovedAt enterpriseDecisionLockedAt updatedAt",
+      )
+      .lean();
 
     if (!requestDoc) {
       return NextResponse.json({ error: "Request not found." }, { status: 404 });
@@ -901,9 +1047,20 @@ export async function PATCH(req: NextRequest) {
       );
     }
 
-    if (requestDoc.status === "approved" || requestDoc.status === "verified") {
+    if (requestDoc.status === "verified") {
       return NextResponse.json(
-        { error: "Approved or verified requests cannot be rejected from customer portal." },
+        { error: "Verified requests cannot be rejected from enterprise portal." },
+        { status: 400 },
+      );
+    }
+
+    const decisionWindow = getEnterpriseDecisionWindowState(requestDoc);
+    if (requestDoc.status === "approved" && decisionWindow.isLocked) {
+      return NextResponse.json(
+        {
+          error:
+            "This request is locked. Candidate data rejection is only allowed within 10 minutes of approval.",
+        },
         { status: 400 },
       );
     }
@@ -966,7 +1123,7 @@ export async function PATCH(req: NextRequest) {
     }
 
     const rejectedQuestions = rejectedFields.map((field) => field.question);
-    const baseRejectionNote = `Customer requested correction for: ${rejectedQuestions.join(", ")}.`;
+    const baseRejectionNote = `Enterprise requested correction for: ${rejectedQuestions.join(", ")}.`;
     const trimmedComment = rejectParsed.data.rejectionComment.trim();
     const rejectionNote = trimmedComment
       ? `${baseRejectionNote} Note: ${trimmedComment}`
@@ -978,6 +1135,8 @@ export async function PATCH(req: NextRequest) {
       candidateSubmittedAt: null,
       rejectionNote,
       customerRejectedFields: rejectedFields,
+      enterpriseApprovedAt: null,
+      enterpriseDecisionLockedAt: null,
     });
 
     const companyProfile = await getCompanyProfile(companyId);
@@ -1084,6 +1243,8 @@ export async function PATCH(req: NextRequest) {
     candidateFormResponses: [],
     customerRejectedFields: [],
     rejectionNote: "",
+    enterpriseApprovedAt: null,
+    enterpriseDecisionLockedAt: null,
   });
 
   const portalUrl = resolveCandidatePortalUrl();

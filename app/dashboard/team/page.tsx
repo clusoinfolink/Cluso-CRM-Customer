@@ -261,7 +261,7 @@ export default function TeamPage() {
         <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6 w-full items-stretch">
           {!canCreateUsers ? (
             <div className="p-4 bg-orange-50 border border-orange-200 rounded-xl text-orange-800 text-sm lg:col-span-2 xl:col-span-3">
-              Your role cannot create users. Contact your partner administrator for access.
+              Your role cannot create users. Contact your enterprise administrator for access.
             </div>
           ) : (
             <div className="bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm hover:shadow-md transition-shadow duration-200 flex flex-col h-full">
@@ -626,7 +626,7 @@ export default function TeamPage() {
           
           {canViewUsers && !canEditAccess && (
             <p className="inline-alert inline-alert-warning mt-4 text-sm bg-orange-50 border border-orange-200 text-orange-800 p-4 rounded-xl">
-              You can view team accounts, but only partner administrators can edit roles or deactivate users.
+              You can view team accounts, but only enterprise administrators can edit roles or deactivate users.
             </p>
           )}
         </div>

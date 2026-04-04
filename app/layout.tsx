@@ -4,8 +4,8 @@ import "./globals.css";
 import { Providers } from "./providers";
 
 export const metadata: Metadata = {
-  title: "Cluso Partner Portal",
-  description: "Partner portal for candidate verification requests",
+  title: "Cluso Enterprise Portal",
+  description: "Enterprise portal for candidate verification requests",
 };
 
 export default function RootLayout({

@@ -390,13 +390,13 @@ export default function SettingsPage() {
     <PortalFrame
       me={me}
       onLogout={logout}
-      title="Partner Settings"
+      title="Enterprise Settings"
       subtitle="Maintain company profile details, invoicing data, and account security."
     >
       <BlockCard as="article" interactive className="settings-profile-card">
         <BlockTitle
           icon={<Building2 size={14} />}
-          title="Partner Profile"
+          title="Enterprise Profile"
           subtitle="Keep your organization profile complete for faster request processing and billing compliance."
           action={
             <span className="neo-badge">

@@ -69,7 +69,7 @@ export default function LoginPage() {
               />
             </div>
             <h1 className="text-4xl font-extrabold tracking-tight text-[#171717] mb-4 leading-tight">
-              Partner Workspace
+              Enterprise Workspace
             </h1>
             <p className="text-[#666] text-base leading-relaxed pr-8">
               Securely submit candidate requests, manage delegates, and track status updates in one centralized command center.
@@ -80,7 +80,7 @@ export default function LoginPage() {
           <div className="relative flex-1 w-full min-h-[350px]">
             <Image
               src="/images/Login-sitiing.jpg"
-              alt="Partner Workspace"
+              alt="Enterprise Workspace"
               fill
               sizes="(min-width: 768px) 40vw, 100vw"
               className="object-contain object-bottom p-4"
@@ -104,14 +104,14 @@ export default function LoginPage() {
           <form onSubmit={onSubmit} className="space-y-6 relative z-10">
             <div className="space-y-2 group">
               <label className="text-xs font-bold uppercase tracking-widest text-[#666] group-focus-within:text-[#171717] transition-colors flex items-center gap-2" htmlFor="email">
-                <Mail size={14} /> Partner Email
+                <Mail size={14} /> Enterprise Email
               </label>
               <div className="relative">
                 <input
                   id="email"
                   className="w-full bg-[#fcfcfc] border border-gray-200 rounded-lg px-4 py-3.5 text-[#171717] placeholder-[#666]/40 focus:outline-none focus:ring-2 focus:ring-[#FFBDE0]/50 focus:border-[#FFBDE0] transition-all font-medium"
                   type="email"
-                  placeholder="partner@company.com"
+                  placeholder="enterprise@company.com"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   required

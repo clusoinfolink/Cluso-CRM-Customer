@@ -40,6 +40,14 @@ const VerificationRequestSchema = new Schema(
       type: Date,
       default: null,
     },
+    enterpriseApprovedAt: {
+      type: Date,
+      default: null,
+    },
+    enterpriseDecisionLockedAt: {
+      type: Date,
+      default: null,
+    },
     rejectionNote: { type: String, default: "" },
     customerRejectedFields: [
       {
@@ -96,6 +104,65 @@ const VerificationRequestSchema = new Schema(
         currency: { type: String, enum: SUPPORTED_CURRENCIES, default: "INR" },
       },
     ],
+    serviceVerifications: [
+      {
+        serviceId: {
+          type: Schema.Types.ObjectId,
+          ref: "Service",
+          required: true,
+        },
+        serviceName: { type: String, required: true },
+        status: {
+          type: String,
+          enum: ["pending", "verified", "unverified"],
+          default: "pending",
+        },
+        verificationMode: { type: String, default: "" },
+        comment: { type: String, default: "" },
+        attempts: [
+          {
+            status: {
+              type: String,
+              enum: ["verified", "unverified"],
+              required: true,
+            },
+            verificationMode: { type: String, default: "" },
+            comment: { type: String, default: "" },
+            attemptedAt: { type: Date, required: true },
+            verifierId: {
+              type: Schema.Types.ObjectId,
+              ref: "User",
+              default: null,
+            },
+            verifierName: { type: String, default: "" },
+            managerId: {
+              type: Schema.Types.ObjectId,
+              ref: "User",
+              default: null,
+            },
+            managerName: { type: String, default: "" },
+          },
+        ],
+      },
+    ],
+    reportMetadata: {
+      generatedAt: { type: Date, default: null },
+      generatedBy: {
+        type: Schema.Types.ObjectId,
+        ref: "User",
+        default: null,
+      },
+      generatedByName: { type: String, default: "" },
+      reportNumber: { type: String, default: "" },
+    },
+    reportData: {
+      type: Schema.Types.Mixed,
+      default: null,
+    },
+    invoiceSnapshot: {
+      type: Schema.Types.Mixed,
+      default: null,
+    },
   },
   { timestamps: true },
 );
@@ -118,7 +185,14 @@ if (
     !models.VerificationRequest.schema.path("candidateUser") ||
     !models.VerificationRequest.schema.path("candidateFormResponses.answers.fileData") ||
     !models.VerificationRequest.schema.path("candidateFormResponses.answers.required") ||
-    !models.VerificationRequest.schema.path("candidateFormResponses.answers.repeatable"))
+    !models.VerificationRequest.schema.path("candidateFormResponses.answers.repeatable") ||
+    !models.VerificationRequest.schema.path("enterpriseApprovedAt") ||
+    !models.VerificationRequest.schema.path("enterpriseDecisionLockedAt") ||
+    !models.VerificationRequest.schema.path("serviceVerifications") ||
+    !models.VerificationRequest.schema.path("serviceVerifications.attempts.attemptedAt") ||
+    !models.VerificationRequest.schema.path("reportMetadata") ||
+    !models.VerificationRequest.schema.path("reportData") ||
+    !models.VerificationRequest.schema.path("invoiceSnapshot"))
 ) {
   delete models.VerificationRequest;
 }

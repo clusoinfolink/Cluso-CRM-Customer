@@ -73,15 +73,15 @@ function getCustomerNotificationContent(item: RequestItem) {
 
   if (item.status === "approved") {
     return {
-      title: "Request approved by partner",
-      detail: `${item.candidateName} verification was approved by partner`,
+      title: "Request approved by enterprise",
+      detail: `${item.candidateName} verification was approved by enterprise`,
     };
   }
 
   if (item.status === "rejected") {
     const rejectionReason = item.rejectionNote ? ` - ${item.rejectionNote}` : "";
     return {
-      title: "Request rejected by partner",
+      title: "Request rejected by enterprise",
       detail: `${item.candidateName}${rejectionReason}`,
     };
   }
@@ -280,7 +280,7 @@ export function PortalFrame({ me, onLogout, title, subtitle, children }: PortalF
       <main className="admin-main">
         <header className="admin-topbar">
           <div style={{ display: "grid", gap: "0.15rem" }}>
-            <h1 className="admin-topbar-title">{title || "Partner Panel"}</h1>
+            <h1 className="admin-topbar-title">{title || "Enterprise Panel"}</h1>
             {subtitle ? (
               <p style={{ margin: 0, color: "#6B7A90", fontSize: "0.85rem" }}>{subtitle}</p>
             ) : null}
