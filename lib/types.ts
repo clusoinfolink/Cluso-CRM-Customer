@@ -9,6 +9,7 @@ export type ServiceOption = {
   currency: SupportedCurrency;
   isPackage?: boolean;
   includedServiceIds?: string[];
+  includedServiceNames?: string[];
 };
 
 export type PortalUser = {
@@ -124,10 +125,13 @@ export type InvoiceSnapshot = {
 };
 
 export type CandidateAnswer = {
+  fieldKey?: string;
   question: string;
   fieldType: "text" | "long_text" | "number" | "file" | "date";
   required?: boolean;
   repeatable?: boolean;
+  notApplicable?: boolean;
+  notApplicableText?: string;
   value: string;
   fileName?: string;
   fileMimeType?: string;
@@ -144,6 +148,7 @@ export type CandidateServiceResponse = {
 export type RejectedCandidateField = {
   serviceId: string;
   serviceName: string;
+  fieldKey?: string;
   question: string;
   fieldType: "text" | "long_text" | "number" | "file" | "date";
 };

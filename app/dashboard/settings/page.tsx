@@ -100,6 +100,42 @@ function createEmptyProfile(): PartnerProfile {
   };
 }
 
+function isEmailLike(value: string) {
+  const trimmed = value.trim();
+  return trimmed.includes("@") && trimmed.includes(".");
+}
+
+function isProfileComplete(profile: PartnerProfile) {
+  const companyAddress = profile.companyInformation.address;
+  const invoiceAddress = profile.invoicingInformation.billingSameAsCompany
+    ? companyAddress
+    : profile.invoicingInformation.address;
+
+  return Boolean(
+    profile.companyInformation.companyName.trim().length >= 2 &&
+      companyAddress.line1.trim() &&
+      companyAddress.city.trim() &&
+      companyAddress.state.trim() &&
+      companyAddress.postalCode.trim() &&
+      companyAddress.country.trim() &&
+      profile.companyInformation.documents.length > 0 &&
+      isEmailLike(profile.invoicingInformation.invoiceEmail) &&
+      invoiceAddress.line1.trim() &&
+      invoiceAddress.city.trim() &&
+      invoiceAddress.state.trim() &&
+      invoiceAddress.postalCode.trim() &&
+      invoiceAddress.country.trim() &&
+      profile.primaryContactInformation.firstName.trim() &&
+      profile.primaryContactInformation.lastName.trim() &&
+      profile.primaryContactInformation.designation.trim() &&
+      isEmailLike(profile.primaryContactInformation.email) &&
+      profile.primaryContactInformation.mobilePhone.number.trim() &&
+      profile.additionalQuestions.heardAboutUs.trim() &&
+      profile.additionalQuestions.yearlyBackgroundsExpected.trim() &&
+      profile.additionalQuestions.primaryIndustry.trim(),
+  );
+}
+
 export default function SettingsPage() {
   const { me, loading, logout } = usePortalSession();
 
@@ -122,6 +158,14 @@ export default function SettingsPage() {
 
     return `${count} file${count === 1 ? "" : "s"} selected`;
   }, [profile.companyInformation.documents.length]);
+
+  const profileSaveState = useMemo(() => {
+    if (!profile.updatedAt) {
+      return "not_saved" as const;
+    }
+
+    return isProfileComplete(profile) ? ("complete" as const) : ("draft" as const);
+  }, [profile]);
 
   useEffect(() => {
     if (!me) {
@@ -321,11 +365,6 @@ export default function SettingsPage() {
     e.preventDefault();
     setProfileMessage("");
 
-    if (profile.companyInformation.documents.length === 0) {
-      setProfileMessage("Upload at least one company document.");
-      return;
-    }
-
     setSavingProfile(true);
 
     const payloadProfile: PartnerProfile = {
@@ -352,8 +391,14 @@ export default function SettingsPage() {
       return;
     }
 
-    setProfile(data.profile ?? payloadProfile);
-    setProfileMessage(data.message ?? "Profile updated successfully.");
+    const nextProfile = data.profile ?? payloadProfile;
+    setProfile(nextProfile);
+    if (isProfileComplete(nextProfile)) {
+      setProfileMessage(data.message ?? "Profile updated successfully.");
+      return;
+    }
+
+    setProfileMessage("Saved as draft. You can complete the remaining fields later.");
   }
 
   async function changePassword(e: FormEvent<HTMLFormElement>) {
@@ -400,12 +445,20 @@ export default function SettingsPage() {
           subtitle="Keep your organization profile complete for faster request processing and billing compliance."
           action={
             <span className="neo-badge">
-              {profile.updatedAt ? `Updated ${new Date(profile.updatedAt).toLocaleDateString()}` : "Not saved yet"}
+              {profileSaveState === "not_saved"
+                ? "Not saved yet"
+                : profileSaveState === "draft"
+                  ? `Saved as Draft · ${new Date(profile.updatedAt as string).toLocaleDateString()}`
+                  : `Profile Complete · ${new Date(profile.updatedAt as string).toLocaleDateString()}`}
             </span>
           }
         />
 
-        <form onSubmit={saveProfile} className="settings-profile-form">
+        <p className="settings-form-note" style={{ marginTop: "0.65rem", marginBottom: "0.15rem" }}>
+          Draft save is enabled. You can save now and complete remaining fields later.
+        </p>
+
+        <form onSubmit={saveProfile} className="settings-profile-form" noValidate>
           <section className="settings-form-section">
             <h3 className="settings-form-heading" style={{ fontSize: "0.98rem", color: "#2D405E", margin: 0, fontWeight: 600, display: "flex", alignItems: "center", gap: "0.4rem" }}>Company Information</h3>
             <div className="settings-grid two-col">
@@ -1069,6 +1122,11 @@ export default function SettingsPage() {
           {profileMessage ? <p className={`inline-alert ${getAlertTone(profileMessage)}`}>{profileMessage}</p> : null}
 
           <div className="settings-submit-row">
+            {profileSaveState === "draft" ? (
+              <span className="neo-badge" style={{ marginRight: "0.55rem" }}>
+                Saved as Draft
+              </span>
+            ) : null}
             <button className="btn btn-primary settings-save-btn" type="submit" disabled={savingProfile}>
               <Save size={16} />
               {savingProfile ? "Saving..." : "Save Profile"}

@@ -57,6 +57,7 @@ const VerificationRequestSchema = new Schema(
           required: true,
         },
         serviceName: { type: String, required: true },
+        fieldKey: { type: String, default: "" },
         question: { type: String, required: true },
         fieldType: {
           type: String,
@@ -75,6 +76,7 @@ const VerificationRequestSchema = new Schema(
         serviceName: { type: String, required: true },
         answers: [
           {
+            fieldKey: { type: String, default: "" },
             question: { type: String, required: true },
             fieldType: {
               type: String,
@@ -83,6 +85,8 @@ const VerificationRequestSchema = new Schema(
             },
             required: { type: Boolean, default: false },
             repeatable: { type: Boolean, default: false },
+            notApplicable: { type: Boolean, default: false },
+            notApplicableText: { type: String, default: "" },
             value: { type: String, default: "" },
             fileName: { type: String, default: "" },
             fileMimeType: { type: String, default: "" },
@@ -102,6 +106,7 @@ const VerificationRequestSchema = new Schema(
         serviceName: { type: String, required: true },
         price: { type: Number, required: true },
         currency: { type: String, enum: SUPPORTED_CURRENCIES, default: "INR" },
+        yearsOfChecking: { type: String, default: 'default' },
       },
     ],
     serviceVerifications: [
@@ -183,7 +188,11 @@ if (
     !models.VerificationRequest.schema.path("candidateFormResponses") ||
     !models.VerificationRequest.schema.path("createdByDelegate") ||
     !models.VerificationRequest.schema.path("candidateUser") ||
+    !models.VerificationRequest.schema.path("customerRejectedFields.fieldKey") ||
     !models.VerificationRequest.schema.path("candidateFormResponses.answers.fileData") ||
+    !models.VerificationRequest.schema.path("candidateFormResponses.answers.fieldKey") ||
+    !models.VerificationRequest.schema.path("candidateFormResponses.answers.notApplicable") ||
+    !models.VerificationRequest.schema.path("candidateFormResponses.answers.notApplicableText") ||
     !models.VerificationRequest.schema.path("candidateFormResponses.answers.required") ||
     !models.VerificationRequest.schema.path("candidateFormResponses.answers.repeatable") ||
     !models.VerificationRequest.schema.path("enterpriseApprovedAt") ||
@@ -192,7 +201,8 @@ if (
     !models.VerificationRequest.schema.path("serviceVerifications.attempts.attemptedAt") ||
     !models.VerificationRequest.schema.path("reportMetadata") ||
     !models.VerificationRequest.schema.path("reportData") ||
-    !models.VerificationRequest.schema.path("invoiceSnapshot"))
+    !models.VerificationRequest.schema.path("invoiceSnapshot") ||
+    !models.VerificationRequest.schema.path("selectedServices.yearsOfChecking"))
 ) {
   delete models.VerificationRequest;
 }

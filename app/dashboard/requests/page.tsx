@@ -10,23 +10,34 @@ import { usePortalSession } from "@/lib/hooks/usePortalSession";
 import { useRequestsData } from "@/lib/hooks/useRequestsData";
 import { RequestItem, RequestStatus } from "@/lib/types";
 
-function buildRejectedFieldKey(serviceId: string, question: string) {
-  return `${serviceId}::${question.trim()}`;
+function buildRejectedFieldKey(serviceId: string, question: string, fieldKey = "") {
+  return JSON.stringify({
+    serviceId: serviceId.trim(),
+    question: question.trim(),
+    fieldKey: fieldKey.trim(),
+  });
 }
 
-function parseRejectedFieldKey(fieldKey: string) {
-  const separatorIndex = fieldKey.indexOf("::");
-  if (separatorIndex === -1) {
+function parseRejectedFieldKey(rawFieldKey: string) {
+  try {
+    const parsed = JSON.parse(rawFieldKey) as {
+      serviceId?: string;
+      question?: string;
+      fieldKey?: string;
+    };
+
+    const serviceId = String(parsed.serviceId ?? "").trim();
+    const question = String(parsed.question ?? "").trim();
+    const fieldKey = String(parsed.fieldKey ?? "").trim();
+
+    if (!serviceId || !question) {
+      return null;
+    }
+
+    return { serviceId, question, fieldKey };
+  } catch {
     return null;
   }
-
-  const serviceId = fieldKey.slice(0, separatorIndex).trim();
-  const question = fieldKey.slice(separatorIndex + 2).trim();
-  if (!serviceId || !question) {
-    return null;
-  }
-
-  return { serviceId, question };
 }
 
 function toLocalDateKey(value?: string | null) {
@@ -322,7 +333,7 @@ function RequestsPageContent() {
 
   function openRejectSelector(item: RequestItem) {
     const preselected = (item.customerRejectedFields ?? []).map((field) =>
-      buildRejectedFieldKey(field.serviceId, field.question),
+      buildRejectedFieldKey(field.serviceId, field.question, field.fieldKey ?? ""),
     );
     setSelectedRejectedFieldKeys(preselected);
     setRejectionComment("");
@@ -358,7 +369,10 @@ function RequestsPageContent() {
 
     const rejectedFields = selectedRejectedFieldKeys
       .map((fieldKey) => parseRejectedFieldKey(fieldKey))
-      .filter((field): field is { serviceId: string; question: string } => Boolean(field));
+      .filter(
+        (field): field is { serviceId: string; question: string; fieldKey: string } =>
+          Boolean(field),
+      );
 
     if (rejectedFields.length === 0) {
       setMessage("Please select at least one field to reject.");
@@ -1227,7 +1241,11 @@ function RequestsPageContent() {
                         <span className="text-slate-500 text-sm">No answer fields available.</span>
                       ) : (
                         serviceResponse.answers.map((answer, answerIndex) => {
-                          const fieldKey = buildRejectedFieldKey(serviceResponse.serviceId, answer.question);
+                          const fieldKey = buildRejectedFieldKey(
+                            serviceResponse.serviceId,
+                            answer.question,
+                            answer.fieldKey ?? "",
+                          );
                           const isChecked = selectedRejectedFieldKeys.includes(fieldKey);
                           const repeatableValues = parseRepeatableAnswerValues(
                             answer.value,

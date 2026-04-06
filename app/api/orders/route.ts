@@ -15,6 +15,7 @@ const schema = z.object({
   candidateEmail: z.string().email(),
   candidatePhone: z.string().optional().default(""),
   selectedServiceIds: z.array(z.string().min(1)).optional().default([]),
+  serviceConfigs: z.record(z.string(), z.string()).optional().default({}),
 });
 
 const updateSchema = z.object({
@@ -31,6 +32,7 @@ const rejectCandidateDataSchema = z.object({
   rejectedFields: z.array(
     z.object({
       serviceId: z.string().min(1),
+      fieldKey: z.string().trim().optional().default(""),
       question: z.string().trim().min(1),
     }),
   ).min(1),
@@ -44,6 +46,81 @@ const enterpriseDecisionSchema = z.object({
 });
 
 const ENTERPRISE_REJECTION_WINDOW_MS = 10 * 60 * 1000;
+const DEFAULT_PERSONAL_DETAILS_SERVICE_NAME = "Personal details";
+const DEFAULT_PERSONAL_DETAILS_FORM_FIELDS = [
+  {
+    fieldKey: "personal_full_name",
+    question: "Full name (as per government ID)",
+    iconKey: "pen",
+    fieldType: "text",
+    required: true,
+    repeatable: false,
+    minLength: 2,
+    maxLength: 120,
+    forceUppercase: false,
+    allowNotApplicable: false,
+    notApplicableText: "",
+  },
+  {
+    fieldKey: "personal_date_of_birth",
+    question: "Date of birth",
+    iconKey: "calendar",
+    fieldType: "date",
+    required: true,
+    repeatable: false,
+    minLength: null,
+    maxLength: null,
+    forceUppercase: false,
+    allowNotApplicable: false,
+    notApplicableText: "",
+  },
+  {
+    fieldKey: "personal_mobile_number",
+    question: "Mobile number",
+    iconKey: "phone",
+    fieldType: "text",
+    required: true,
+    repeatable: false,
+    minLength: 7,
+    maxLength: 20,
+    forceUppercase: false,
+    allowNotApplicable: false,
+    notApplicableText: "",
+  },
+  {
+    fieldKey: "personal_residential_address",
+    question: "Current residential address",
+    iconKey: "house",
+    fieldType: "long_text",
+    required: true,
+    repeatable: false,
+    minLength: 10,
+    maxLength: 400,
+    forceUppercase: false,
+    allowNotApplicable: false,
+    notApplicableText: "",
+  },
+  {
+    fieldKey: "personal_primary_id_number",
+    question: "Primary government ID number",
+    iconKey: "id-card",
+    fieldType: "text",
+    required: true,
+    repeatable: false,
+    minLength: 4,
+    maxLength: 80,
+    forceUppercase: true,
+    allowNotApplicable: false,
+    notApplicableText: "",
+  },
+];
+
+function isHiddenService(service: {
+  hiddenFromCustomerPortal?: unknown;
+  isDefaultPersonalDetails?: unknown;
+}) {
+  return Boolean(service.hiddenFromCustomerPortal || service.isDefaultPersonalDetails);
+}
 
 function normalizeDateValue(value: unknown) {
   if (!value) {
@@ -197,6 +274,7 @@ type CompanyServiceSelection = {
   currency: SupportedCurrency;
   isPackage: boolean;
   includedServiceIds: string[];
+  hiddenFromCustomerPortal: boolean;
 };
 
 type ExpandedSelectedService = {
@@ -205,6 +283,119 @@ type ExpandedSelectedService = {
   price: number;
   currency: SupportedCurrency;
 };
+
+type PersonalDetailsService = {
+  serviceId: string;
+  serviceName: string;
+  currency: SupportedCurrency;
+};
+
+function toPersonalDetailsService(service: {
+  _id: unknown;
+  name?: string;
+  defaultCurrency?: unknown;
+}): PersonalDetailsService {
+  return {
+    serviceId: String(service._id),
+    serviceName: service.name?.trim() || DEFAULT_PERSONAL_DETAILS_SERVICE_NAME,
+    currency: (service.defaultCurrency ?? "INR") as SupportedCurrency,
+  };
+}
+
+async function ensureDefaultPersonalDetailsService(): Promise<PersonalDetailsService> {
+  const existingDefault = await Service.findOne({ isDefaultPersonalDetails: true })
+    .select(
+      "_id name defaultCurrency hiddenFromCustomerPortal isPackage defaultPrice includedServiceIds formFields",
+    )
+    .lean();
+
+  if (existingDefault) {
+    const shouldSeedDefaultFields =
+      !Array.isArray(existingDefault.formFields) || existingDefault.formFields.length === 0;
+
+    if (
+      !isHiddenService(existingDefault) ||
+      Boolean(existingDefault.isPackage) ||
+      Number(existingDefault.defaultPrice ?? 0) !== 0 ||
+      (existingDefault.includedServiceIds ?? []).length > 0 ||
+      shouldSeedDefaultFields
+    ) {
+      await Service.findByIdAndUpdate(existingDefault._id, {
+        hiddenFromCustomerPortal: true,
+        isDefaultPersonalDetails: true,
+        isPackage: false,
+        includedServiceIds: [],
+        defaultPrice: 0,
+        ...(shouldSeedDefaultFields
+          ? {
+              formFields: DEFAULT_PERSONAL_DETAILS_FORM_FIELDS,
+            }
+          : {}),
+      });
+    }
+
+    return toPersonalDetailsService(existingDefault);
+  }
+
+  const existingByName = await Service.findOne({
+    name: { $regex: /^personal\s+details$/i },
+  })
+    .select("_id name defaultCurrency formFields")
+    .lean();
+
+  if (existingByName) {
+    const shouldSeedDefaultFields =
+      !Array.isArray(existingByName.formFields) || existingByName.formFields.length === 0;
+
+    await Service.findByIdAndUpdate(existingByName._id, {
+      hiddenFromCustomerPortal: true,
+      isDefaultPersonalDetails: true,
+      isPackage: false,
+      includedServiceIds: [],
+      defaultPrice: 0,
+      ...(shouldSeedDefaultFields
+        ? {
+            formFields: DEFAULT_PERSONAL_DETAILS_FORM_FIELDS,
+          }
+        : {}),
+    });
+
+    return toPersonalDetailsService(existingByName);
+  }
+
+  const createdService = await Service.create({
+    name: DEFAULT_PERSONAL_DETAILS_SERVICE_NAME,
+    description: "System service that captures candidate personal details.",
+    defaultPrice: 0,
+    defaultCurrency: "INR",
+    isPackage: false,
+    includedServiceIds: [],
+    hiddenFromCustomerPortal: true,
+    isDefaultPersonalDetails: true,
+    formFields: DEFAULT_PERSONAL_DETAILS_FORM_FIELDS,
+  });
+
+  return toPersonalDetailsService(createdService);
+}
+
+function appendPersonalDetailsService(
+  services: ExpandedSelectedService[],
+  personalDetailsService: PersonalDetailsService,
+) {
+  if (services.some((service) => service.serviceId === personalDetailsService.serviceId)) {
+    return services;
+  }
+
+  return [
+    ...services,
+    {
+      serviceId: personalDetailsService.serviceId,
+      serviceName: personalDetailsService.serviceName,
+      price: 0,
+      currency: personalDetailsService.currency,
+    },
+  ];
+}
 
 async function getCompanyProfile(companyId: string) {
   const company = await User.findById(companyId).lean();
@@ -223,7 +414,9 @@ async function getCompanyProfile(companyId: string) {
   const serviceDocs =
     selectedServiceIds.length > 0
       ? await Service.find({ _id: { $in: selectedServiceIds } })
-          .select("name defaultPrice defaultCurrency isPackage includedServiceIds")
+          .select(
+            "name defaultPrice defaultCurrency isPackage includedServiceIds hiddenFromCustomerPortal isDefaultPersonalDetails",
+          )
           .lean()
       : [];
 
@@ -236,13 +429,13 @@ async function getCompanyProfile(companyId: string) {
         defaultCurrency: (service.defaultCurrency ?? "INR") as SupportedCurrency,
         isPackage: Boolean(service.isPackage),
         includedServiceIds: (service.includedServiceIds ?? []).map((id) => String(id)),
+        hiddenFromCustomerPortal: isHiddenService(service),
       },
     ]),
   );
 
-  return {
-    companyName: company.name || "Company",
-    services: selectedServices.map((item) => {
+  const resolvedServices = selectedServices
+    .map((item) => {
       const serviceMeta = serviceMap.get(item.serviceId);
 
       return {
@@ -252,8 +445,14 @@ async function getCompanyProfile(companyId: string) {
         currency: item.currency,
         isPackage: Boolean(serviceMeta?.isPackage),
         includedServiceIds: serviceMeta?.includedServiceIds ?? [],
+        hiddenFromCustomerPortal: Boolean(serviceMeta?.hiddenFromCustomerPortal),
       } satisfies CompanyServiceSelection;
-    }),
+    })
+    .filter((item) => !item.hiddenFromCustomerPortal);
+
+  return {
+    companyName: company.name || "Company",
+    services: resolvedServices,
   };
 }
 
@@ -264,7 +463,10 @@ async function expandSelectedServices(
   const assignmentMap = new Map(companyServices.map((service) => [service.serviceId, service]));
   const selectedAssignments = selectedServiceIds
     .map((serviceId) => assignmentMap.get(serviceId))
-    .filter((service): service is CompanyServiceSelection => Boolean(service));
+    .filter(
+      (service): service is CompanyServiceSelection =>
+        Boolean(service && !service.hiddenFromCustomerPortal),
+    );
 
   const includedServiceIds = [
     ...new Set(
@@ -277,7 +479,9 @@ async function expandSelectedServices(
   const includedServiceDocs =
     includedServiceIds.length > 0
       ? await Service.find({ _id: { $in: includedServiceIds } })
-          .select("name defaultPrice defaultCurrency isPackage")
+          .select(
+            "name defaultPrice defaultCurrency isPackage hiddenFromCustomerPortal isDefaultPersonalDetails",
+          )
           .lean()
       : [];
 
@@ -289,6 +493,7 @@ async function expandSelectedServices(
         defaultPrice: typeof service.defaultPrice === "number" ? service.defaultPrice : 0,
         defaultCurrency: (service.defaultCurrency ?? "INR") as SupportedCurrency,
         isPackage: Boolean(service.isPackage),
+        hiddenFromCustomerPortal: isHiddenService(service),
       },
     ]),
   );
@@ -318,7 +523,7 @@ async function expandSelectedServices(
 
     for (const includedServiceId of selectedService.includedServiceIds) {
       const assignedService = assignmentMap.get(includedServiceId);
-      if (assignedService && !assignedService.isPackage) {
+      if (assignedService && !assignedService.isPackage && !assignedService.hiddenFromCustomerPortal) {
         pushService({
           serviceId: assignedService.serviceId,
           serviceName: assignedService.serviceName,
@@ -329,7 +534,7 @@ async function expandSelectedServices(
       }
 
       const includedService = includedServiceMap.get(includedServiceId);
-      if (!includedService || includedService.isPackage) {
+      if (!includedService || includedService.isPackage || includedService.hiddenFromCustomerPortal) {
         continue;
       }
 
@@ -694,6 +899,27 @@ export async function GET(req: NextRequest) {
     .sort({ createdAt: -1 })
     .lean();
 
+  const selectedServiceIds = [
+    ...new Set(
+      items.flatMap((item) =>
+        (item.selectedServices ?? []).map((service) => String(service.serviceId)),
+      ),
+    ),
+  ];
+
+  const hiddenServiceIds =
+    selectedServiceIds.length > 0
+      ? new Set(
+          (
+            await Service.find({ _id: { $in: selectedServiceIds } })
+              .select("hiddenFromCustomerPortal isDefaultPersonalDetails")
+              .lean()
+          )
+            .filter((service) => isHiddenService(service))
+            .map((service) => String(service._id)),
+        )
+      : new Set<string>();
+
   const creatorIds = [...new Set(items.map((item) => String(item.createdBy)))];
   const creators =
     creatorIds.length > 0
@@ -761,9 +987,42 @@ export async function GET(req: NextRequest) {
 
   const enriched = items.map((item) => {
     const decisionState = getEnterpriseDecisionWindowState(item);
+    const visibleSelectedServices = (item.selectedServices ?? []).filter(
+      (service) => !hiddenServiceIds.has(String(service.serviceId)),
+    );
+    const visibleServiceIds = new Set(
+      visibleSelectedServices.map((service) => String(service.serviceId)),
+    );
+
+    const visibleServiceVerifications = (item.serviceVerifications ?? []).filter((verification) =>
+      visibleServiceIds.has(String(verification.serviceId)),
+    );
+
+    const visibleCandidateFormResponses = (item.candidateFormResponses ?? []).filter(
+      (serviceResponse) => visibleServiceIds.has(String(serviceResponse.serviceId)),
+    );
+
+    const visibleCustomerRejectedFields = (item.customerRejectedFields ?? []).filter((field) =>
+      visibleServiceIds.has(String(field.serviceId)),
+    );
+
+    const visibleInvoiceSnapshot = item.invoiceSnapshot
+      ? {
+          ...item.invoiceSnapshot,
+          items: (item.invoiceSnapshot.items ?? []).filter(
+            (invoiceItem: { serviceId: unknown }) =>
+              visibleServiceIds.has(String(invoiceItem.serviceId)),
+          ),
+        }
+      : item.invoiceSnapshot ?? null;
 
     return {
       ...item,
+      selectedServices: visibleSelectedServices,
+      serviceVerifications: visibleServiceVerifications,
+      candidateFormResponses: visibleCandidateFormResponses,
+      customerRejectedFields: visibleCustomerRejectedFields,
+      invoiceSnapshot: visibleInvoiceSnapshot,
       createdByName: creatorMap.get(String(item.createdBy))?.name ?? "Unknown",
       createdByRole: creatorMap.get(String(item.createdBy))?.role ?? "unknown",
       delegateName: resolveDelegateName(item),
@@ -845,17 +1104,23 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const selectedServices = await expandSelectedServices(
+  const selectedCompanyServices = await expandSelectedServices(
     parsed.data.selectedServiceIds,
     companyServices,
   );
 
-  if (parsed.data.selectedServiceIds.length > 0 && selectedServices.length === 0) {
+  if (parsed.data.selectedServiceIds.length > 0 && selectedCompanyServices.length === 0) {
     return NextResponse.json(
       { error: "Selected package deal is misconfigured. Please contact admin." },
       { status: 400 },
     );
   }
+
+  const personalDetailsService = await ensureDefaultPersonalDetailsService();
+  const selectedServices = appendPersonalDetailsService(
+    selectedCompanyServices,
+    personalDetailsService,
+  );
 
   const candidateAccount = await ensureCandidateUser(
     parsed.data.candidateEmail,
@@ -874,7 +1139,10 @@ export async function POST(req: NextRequest) {
     candidateFormStatus: "pending",
     candidateSubmittedAt: null,
     candidateFormResponses: [],
-    selectedServices,
+    selectedServices: selectedServices.map((item) => ({
+      ...item,
+      yearsOfChecking: parsed.data.serviceConfigs[item.serviceId] || "default",
+    })),
   });
 
   const portalUrl = resolveCandidatePortalUrl();
@@ -1070,6 +1338,7 @@ export async function PATCH(req: NextRequest) {
       {
         serviceId: string;
         serviceName: string;
+        fieldKey: string;
         question: string;
         fieldType: "text" | "long_text" | "number" | "file" | "date";
       }
@@ -1079,14 +1348,23 @@ export async function PATCH(req: NextRequest) {
       const serviceId = String(serviceResponse.serviceId);
       const serviceName = serviceResponse.serviceName;
       for (const answer of serviceResponse.answers ?? []) {
+        const normalizedFieldKey = String(answer.fieldKey ?? "").trim();
         const question = answer.question.trim();
-        const fieldKey = `${serviceId}::${question}`;
-        availableFieldMap.set(fieldKey, {
+        const fieldInfo = {
           serviceId,
           serviceName,
+          fieldKey: normalizedFieldKey,
           question,
           fieldType: answer.fieldType,
-        });
+        };
+
+        if (question) {
+          availableFieldMap.set(`${serviceId}::question::${question}`, fieldInfo);
+        }
+
+        if (normalizedFieldKey) {
+          availableFieldMap.set(`${serviceId}::field::${normalizedFieldKey}`, fieldInfo);
+        }
       }
     }
 
@@ -1095,15 +1373,22 @@ export async function PATCH(req: NextRequest) {
       {
         serviceId: string;
         serviceName: string;
+        fieldKey: string;
         question: string;
         fieldType: "text" | "long_text" | "number" | "file" | "date";
       }
     >();
 
     for (const selectedField of rejectParsed.data.rejectedFields) {
+      const normalizedFieldKey = selectedField.fieldKey.trim();
       const normalizedQuestion = selectedField.question.trim();
-      const selectedKey = `${selectedField.serviceId}::${normalizedQuestion}`;
-      const matchedField = availableFieldMap.get(selectedKey);
+      const selectedByFieldKey = normalizedFieldKey
+        ? availableFieldMap.get(`${selectedField.serviceId}::field::${normalizedFieldKey}`)
+        : undefined;
+      const selectedByQuestion = availableFieldMap.get(
+        `${selectedField.serviceId}::question::${normalizedQuestion}`,
+      );
+      const matchedField = selectedByFieldKey ?? selectedByQuestion;
       if (!matchedField) {
         return NextResponse.json(
           { error: "One or more selected fields are invalid for this request." },
@@ -1111,7 +1396,11 @@ export async function PATCH(req: NextRequest) {
         );
       }
 
-      rejectedFieldMap.set(selectedKey, matchedField);
+      const dedupeKey = matchedField.fieldKey
+        ? `${matchedField.serviceId}::field::${matchedField.fieldKey}`
+        : `${matchedField.serviceId}::question::${matchedField.question}`;
+
+      rejectedFieldMap.set(dedupeKey, matchedField);
     }
 
     const rejectedFields = [...rejectedFieldMap.values()];
@@ -1196,17 +1485,23 @@ export async function PATCH(req: NextRequest) {
     );
   }
 
-  const selectedServices = await expandSelectedServices(
+  const selectedCompanyServices = await expandSelectedServices(
     parsed.data.selectedServiceIds,
     companyServices,
   );
 
-  if (parsed.data.selectedServiceIds.length > 0 && selectedServices.length === 0) {
+  if (parsed.data.selectedServiceIds.length > 0 && selectedCompanyServices.length === 0) {
     return NextResponse.json(
       { error: "Selected package deal is misconfigured. Please contact admin." },
       { status: 400 },
     );
   }
+
+  const personalDetailsService = await ensureDefaultPersonalDetailsService();
+  const selectedServices = appendPersonalDetailsService(
+    selectedCompanyServices,
+    personalDetailsService,
+  );
 
   const candidateAccount = await ensureCandidateUser(
     parsed.data.candidateEmail,
