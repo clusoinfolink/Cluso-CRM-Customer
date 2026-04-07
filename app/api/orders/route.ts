@@ -1016,12 +1016,18 @@ export async function GET(req: NextRequest) {
         }
       : item.invoiceSnapshot ?? null;
 
+    const isReportSharedWithCustomer =
+      Boolean(item.reportData) &&
+      Boolean(item.reportMetadata && item.reportMetadata.customerSharedAt);
+
     return {
       ...item,
       selectedServices: visibleSelectedServices,
       serviceVerifications: visibleServiceVerifications,
       candidateFormResponses: visibleCandidateFormResponses,
       customerRejectedFields: visibleCustomerRejectedFields,
+      reportMetadata: isReportSharedWithCustomer ? item.reportMetadata ?? null : null,
+      reportData: isReportSharedWithCustomer ? item.reportData ?? null : null,
       invoiceSnapshot: visibleInvoiceSnapshot,
       createdByName: creatorMap.get(String(item.createdBy))?.name ?? "Unknown",
       createdByRole: creatorMap.get(String(item.createdBy))?.role ?? "unknown",

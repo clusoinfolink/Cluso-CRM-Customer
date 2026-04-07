@@ -1,6 +1,7 @@
 ﻿"use client";
 
 import { FormEvent, useEffect, useMemo, useState, Suspense } from "react";
+import Image from "next/image";
 import { useSearchParams } from "next/navigation";
 import { ListChecks, Search, X } from "lucide-react";
 import { PortalFrame } from "@/components/dashboard/PortalFrame";
@@ -134,6 +135,288 @@ function getEnterpriseStatusLabel(status: RequestStatus) {
   return status;
 }
 
+const REPORT_NOTICE_PARAGRAPHS = [
+  "The Cluso Report is provided by CLUSO INFOLINK, LLC. CLUSO INFOLINK, LLC does not warrant the completeness or correctness of this report or any of the information contained herein. CLUSO INFOLINK, LLC is not liable for any loss, damage or injury caused by negligence or other act or failure of CLUSO INFOLINK, LLC in procuring, collecting or communicating any such information. Reliance on any information contained herein shall be solely at the users risk and shall not constitute a waiver of any claim against, and a release of, CLUSO INFOLINK, LLC.",
+  "This report is furnished in strict confidence for your exclusive use of legitimate business purposes and for no other purpose, and shall not be reproduced in whole or in part in any manner whatsoever. CLUSO INFOLINK is a private investigation company licensed by the Texas Private Security Bureau (TX License Number A16821). Contact the Texas PSB for regulatory information or complaints: TX Private Security, MSC 0241, PO Box 4087, Austin TX 78773-0001 Tel: 512-424-7298 Fax: 512-424-7728.",
+] as const;
+
+type ReportPreviewAttempt = {
+  attemptedAt: string;
+  status: string;
+  verificationMode: string;
+  comment: string;
+  verifierName: string;
+  managerName: string;
+};
+
+type ReportPreviewService = {
+  serviceName: string;
+  status: string;
+  verificationMode: string;
+  comment: string;
+  attempts: ReportPreviewAttempt[];
+};
+
+type ReportPreviewData = {
+  reportNumber: string;
+  generatedAt: string;
+  generatedByName: string;
+  candidate: {
+    name: string;
+    email: string;
+    phone: string;
+  };
+  company: {
+    name: string;
+    email: string;
+  };
+  status: string;
+  createdAt: string;
+  services: ReportPreviewService[];
+  createdByName: string;
+  verifiedByName: string;
+};
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+
+  return value as Record<string, unknown>;
+}
+
+function asString(value: unknown, fallback = "") {
+  return typeof value === "string" ? value : fallback;
+}
+
+function formatReportDateTime(value?: string | null) {
+  if (!value) {
+    return "-";
+  }
+
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return "-";
+  }
+
+  return parsed.toLocaleString("en-IN", {
+    day: "numeric",
+    month: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: true,
+  });
+}
+
+function formatReportDate(value?: string | null) {
+  if (!value) {
+    return "-";
+  }
+
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return "-";
+  }
+
+  return parsed.toLocaleDateString("en-IN", {
+    day: "numeric",
+    month: "numeric",
+    year: "numeric",
+  });
+}
+
+function toReportStatusLabel(value: string) {
+  const normalized = value.trim().toLowerCase();
+  if (!normalized) {
+    return "-";
+  }
+
+  return `${normalized.charAt(0).toUpperCase()}${normalized.slice(1)}`;
+}
+
+function toReportAttemptStatusLabel(value: string) {
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "verified") {
+    return "Verified";
+  }
+
+  return "In Progress";
+}
+
+function toReportModeLabel(value: string) {
+  const normalized = value.trim();
+  if (!normalized) {
+    return "Manual";
+  }
+
+  if (normalized === normalized.toLowerCase()) {
+    return `${normalized.charAt(0).toUpperCase()}${normalized.slice(1)}`;
+  }
+
+  return normalized;
+}
+
+function getReportStatusColor(status: string) {
+  const normalized = status.trim().toLowerCase();
+  if (normalized === "verified") {
+    return "#0A7D2A";
+  }
+
+  if (normalized === "unverified" || normalized === "rejected") {
+    return "#C62828";
+  }
+
+  return "#111827";
+}
+
+function getReportAttemptStatusColor(status: string) {
+  const normalized = status.trim().toLowerCase();
+  if (normalized === "verified") {
+    return "#0A7D2A";
+  }
+
+  return "#A16207";
+}
+
+function parseStoredReportData(
+  raw: unknown,
+): Omit<ReportPreviewData, "createdByName" | "verifiedByName"> | null {
+  const root = asRecord(raw);
+  if (!root) {
+    return null;
+  }
+
+  const candidate = asRecord(root.candidate);
+  const company = asRecord(root.company);
+
+  const services = (Array.isArray(root.services) ? root.services : [])
+    .map((serviceEntry) => {
+      const service = asRecord(serviceEntry);
+      if (!service) {
+        return null;
+      }
+
+      const attempts = (Array.isArray(service.attempts) ? service.attempts : [])
+        .map((attemptEntry) => {
+          const attempt = asRecord(attemptEntry);
+          if (!attempt) {
+            return null;
+          }
+
+          return {
+            attemptedAt: asString(attempt.attemptedAt),
+            status: asString(attempt.status, "pending"),
+            verificationMode: asString(attempt.verificationMode),
+            comment: asString(attempt.comment),
+            verifierName: asString(attempt.verifierName),
+            managerName: asString(attempt.managerName),
+          } satisfies ReportPreviewAttempt;
+        })
+        .filter((attempt): attempt is ReportPreviewAttempt => Boolean(attempt));
+
+      return {
+        serviceName: asString(service.serviceName, "Unnamed Service"),
+        status: asString(service.status, "pending"),
+        verificationMode: asString(service.verificationMode),
+        comment: asString(service.comment),
+        attempts,
+      } satisfies ReportPreviewService;
+    })
+    .filter((service): service is ReportPreviewService => Boolean(service));
+
+  return {
+    reportNumber: asString(root.reportNumber),
+    generatedAt: asString(root.generatedAt),
+    generatedByName: asString(root.generatedByName),
+    candidate: {
+      name: asString(candidate?.name),
+      email: asString(candidate?.email),
+      phone: asString(candidate?.phone),
+    },
+    company: {
+      name: asString(company?.name),
+      email: asString(company?.email),
+    },
+    status: asString(root.status, "pending"),
+    createdAt: asString(root.createdAt),
+    services,
+  };
+}
+
+function buildReportPreviewData(item: RequestItem, viewerName: string) {
+  const stored = parseStoredReportData(item.reportData);
+
+  const fallbackServices: ReportPreviewService[] =
+    item.serviceVerifications && item.serviceVerifications.length > 0
+      ? item.serviceVerifications.map((service) => ({
+          serviceName: service.serviceName,
+          status: service.status,
+          verificationMode: service.verificationMode,
+          comment: service.comment,
+          attempts: (service.attempts ?? []).map((attempt) => ({
+            attemptedAt: attempt.attemptedAt,
+            status: attempt.status,
+            verificationMode: attempt.verificationMode,
+            comment: attempt.comment,
+            verifierName: attempt.verifierName ?? "",
+            managerName: attempt.managerName ?? "",
+          })),
+        }))
+      : (item.selectedServices ?? []).map((service) => ({
+          serviceName: service.serviceName,
+          status: "pending",
+          verificationMode: "",
+          comment: "",
+          attempts: [],
+        }));
+
+  const services = stored?.services.length ? stored.services : fallbackServices;
+  const latestAttempt = services
+    .flatMap((service) => service.attempts)
+    .slice()
+    .sort(
+      (first, second) =>
+        new Date(second.attemptedAt || 0).getTime() -
+        new Date(first.attemptedAt || 0).getTime(),
+    )[0];
+
+  const generatedByName =
+    item.reportMetadata?.generatedByName ||
+    stored?.generatedByName ||
+    item.createdByName ||
+    viewerName ||
+    "Unknown";
+
+  return {
+    reportNumber:
+      item.reportMetadata?.reportNumber ||
+      stored?.reportNumber ||
+      `RPT-${item._id.slice(-8).toUpperCase()}`,
+    generatedAt:
+      item.reportMetadata?.generatedAt || stored?.generatedAt || item.createdAt,
+    generatedByName,
+    candidate: {
+      name: stored?.candidate.name || item.candidateName || "-",
+      email: stored?.candidate.email || item.candidateEmail || "-",
+      phone: stored?.candidate.phone || item.candidatePhone || "-",
+    },
+    company: {
+      name: stored?.company.name || item.invoiceSnapshot?.companyName || "-",
+      email: stored?.company.email || item.invoiceSnapshot?.billingEmail || "-",
+    },
+    status: stored?.status || item.status,
+    createdAt: stored?.createdAt || item.createdAt,
+    services,
+    createdByName: generatedByName,
+    verifiedByName:
+      latestAttempt?.managerName ||
+      latestAttempt?.verifierName ||
+      generatedByName,
+  } satisfies ReportPreviewData;
+}
+
 function parseRepeatableAnswerValues(rawValue: string, repeatable?: boolean) {
   if (!repeatable) {
     return [];
@@ -171,6 +454,8 @@ function RequestsPageContent() {
   const [highlightedRequestId, setHighlightedRequestId] = useState("");
   const [selectedActionRowId, setSelectedActionRowId] = useState("");
   const [activeResponseRequestId, setActiveResponseRequestId] = useState("");
+  const [activeReportRequestId, setActiveReportRequestId] = useState("");
+  const [downloadingReportRequestId, setDownloadingReportRequestId] = useState("");
   const [isRejectSelectorOpen, setIsRejectSelectorOpen] = useState(false);
   const [selectedRejectedFieldKeys, setSelectedRejectedFieldKeys] = useState<string[]>([]);
   const [rejectionComment, setRejectionComment] = useState("");
@@ -306,6 +591,11 @@ function RequestsPageContent() {
     [activeResponseRequestId, items],
   );
 
+  const activeReportRequest = useMemo(
+    () => items.find((item) => item._id === activeReportRequestId) ?? null,
+    [activeReportRequestId, items],
+  );
+
   useEffect(() => {
     const timer = window.setInterval(() => {
       setNowMs(Date.now());
@@ -329,6 +619,66 @@ function RequestsPageContent() {
     setIsRejectSelectorOpen(false);
     setSelectedRejectedFieldKeys([]);
     setRejectionComment("");
+  }
+
+  function openSharedReport(item: RequestItem) {
+    const canViewSharedReport =
+      item.status === "verified" &&
+      Boolean(item.reportData) &&
+      Boolean(item.reportMetadata?.customerSharedAt);
+
+    if (!canViewSharedReport) {
+      setMessage("Report is not shared with customer portal yet.");
+      return;
+    }
+
+    setActiveResponseRequestId("");
+    setActiveReportRequestId(item._id);
+  }
+
+  function closeSharedReportModal() {
+    setActiveReportRequestId("");
+  }
+
+  async function downloadSharedReport(item: RequestItem) {
+    if (!item.reportMetadata?.customerSharedAt) {
+      setMessage("Report is not shared with customer portal yet.");
+      return;
+    }
+
+    setMessage("");
+    setDownloadingReportRequestId(item._id);
+
+    try {
+      const response = await fetch(`/api/orders/${encodeURIComponent(item._id)}/report`, {
+        method: "GET",
+        cache: "no-store",
+      });
+
+      if (!response.ok) {
+        const data = (await response.json().catch(() => null)) as
+          | { error?: string }
+          | null;
+        setMessage(data?.error ?? "Could not download report.");
+        setDownloadingReportRequestId("");
+        return;
+      }
+
+      const blob = await response.blob();
+      const objectUrl = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = objectUrl;
+      const reportName = item.reportMetadata?.reportNumber?.trim() || item._id;
+      link.download = `${reportName.replace(/[^a-zA-Z0-9_-]+/g, "_")}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(objectUrl);
+    } catch {
+      setMessage("Could not download report.");
+    } finally {
+      setDownloadingReportRequestId("");
+    }
   }
 
   function openRejectSelector(item: RequestItem) {
@@ -703,6 +1053,441 @@ function RequestsPageContent() {
     );
   }
 
+  function renderSharedReportPreview(item: RequestItem) {
+    const report = buildReportPreviewData(item, me?.name ?? "Unknown");
+
+    return (
+      <div style={{ overflowX: "auto" }}>
+        <article
+          style={{
+            minWidth: "880px",
+            background: "#E8E8E8",
+            border: "3px solid #8E1525",
+            padding: "4px",
+            boxShadow: "0 8px 30px rgba(15, 23, 42, 0.18)",
+          }}
+        >
+          <div
+            style={{
+              border: "1px solid #BBB26A",
+              padding: "2.4rem 2.7rem 1.6rem",
+              color: "#111111",
+              fontFamily: '"Times New Roman", Georgia, serif',
+            }}
+          >
+            <header
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "flex-start",
+                gap: "2rem",
+              }}
+            >
+              <div
+                style={{
+                  width: "200px",
+                  height: "170px",
+                  border: "1px solid #8A8A8A",
+                  background: "#F4F4F4",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  overflow: "hidden",
+                  flexShrink: 0,
+                }}
+              >
+                <Image
+                  src="/images/cluso-infolink-logo.png"
+                  alt="Cluso Infolink"
+                  width={176}
+                  height={150}
+                  style={{ width: "88%", height: "88%", objectFit: "contain" }}
+                />
+              </div>
+
+              <div
+                style={{
+                  color: "#5A5A5A",
+                  fontSize: "1.05rem",
+                  lineHeight: 1.45,
+                  textAlign: "right",
+                  marginTop: "3.4rem",
+                }}
+              >
+                <div>
+                  <span style={{ fontWeight: 700, color: "#474747" }}>Report #:</span>{" "}
+                  {report.reportNumber}
+                </div>
+                <div>
+                  <span style={{ fontWeight: 700, color: "#474747" }}>Date:</span>{" "}
+                  {formatReportDate(report.generatedAt)}
+                </div>
+              </div>
+            </header>
+
+            <h2
+              style={{
+                textAlign: "center",
+                margin: "2.1rem 0 0.85rem",
+                color: "#1F4597",
+                fontWeight: 700,
+                fontSize: "3.15rem",
+                lineHeight: 1.1,
+              }}
+            >
+              Verification Report
+            </h2>
+
+            <section
+              style={{
+                border: "1px solid #D1D1D1",
+                borderRadius: "6px",
+                padding: "0.8rem 1.05rem",
+                background: "rgba(255,255,255,0.43)",
+                display: "grid",
+                gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+                columnGap: "1.3rem",
+                rowGap: "0.25rem",
+                fontSize: "1.03rem",
+              }}
+            >
+              <div>
+                <div>
+                  <strong>Report Number:</strong> {report.reportNumber}
+                </div>
+                <div>
+                  <strong>Request Created:</strong>{" "}
+                  {formatReportDateTime(report.createdAt)}
+                </div>
+                <div>
+                  <strong>Overall Status:</strong>{" "}
+                  <span
+                    style={{
+                      color: getReportStatusColor(report.status),
+                      fontWeight: 700,
+                    }}
+                  >
+                    {toReportStatusLabel(report.status)}
+                  </span>
+                </div>
+              </div>
+              <div>
+                <div>
+                  <strong>Generated At:</strong>{" "}
+                  {formatReportDateTime(report.generatedAt)}
+                </div>
+                <div>
+                  <strong>Generated By:</strong> {report.generatedByName || "-"}
+                </div>
+              </div>
+            </section>
+
+            <section
+              style={{
+                marginTop: "1.45rem",
+                display: "grid",
+                gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+                gap: "2.2rem",
+              }}
+            >
+              <div>
+                <h3
+                  style={{
+                    margin: 0,
+                    color: "#1F4597",
+                    fontSize: "1.65rem",
+                    fontWeight: 700,
+                  }}
+                >
+                  Candidate Details
+                </h3>
+                <p
+                  style={{
+                    margin: "0.65rem 0 0",
+                    fontSize: "1.14rem",
+                    lineHeight: 1.4,
+                  }}
+                >
+                  <strong>Name:</strong> {report.candidate.name || "-"}
+                  <br />
+                  <strong>Email:</strong> {report.candidate.email || "-"}
+                  <br />
+                  <strong>Phone:</strong> {report.candidate.phone || "-"}
+                </p>
+              </div>
+
+              <div>
+                <h3
+                  style={{
+                    margin: 0,
+                    color: "#1F4597",
+                    fontSize: "1.65rem",
+                    fontWeight: 700,
+                  }}
+                >
+                  Company Details
+                </h3>
+                <p
+                  style={{
+                    margin: "0.65rem 0 0",
+                    fontSize: "1.14rem",
+                    lineHeight: 1.4,
+                  }}
+                >
+                  <strong>Company:</strong> {report.company.name || "-"}
+                  <br />
+                  <strong>Email:</strong> {report.company.email || "-"}
+                </p>
+              </div>
+            </section>
+
+            <div style={{ borderTop: "1px solid #717171", marginTop: "1.1rem" }} />
+
+            <section style={{ marginTop: "1.35rem" }}>
+              <h3
+                style={{
+                  margin: 0,
+                  color: "#1F4597",
+                  fontSize: "2.05rem",
+                  fontWeight: 700,
+                }}
+              >
+                Service Verification Summary
+              </h3>
+
+              <div style={{ marginTop: "0.75rem", display: "grid", gap: "1rem" }}>
+                {report.services.map((service, serviceIndex) => {
+                  const attempts = service.attempts
+                    .slice()
+                    .sort(
+                      (first, second) =>
+                        new Date(second.attemptedAt || 0).getTime() -
+                        new Date(first.attemptedAt || 0).getTime(),
+                    );
+
+                  return (
+                    <section key={`${item._id}-preview-service-${serviceIndex}`}>
+                      <h4 style={{ margin: 0, fontWeight: 700, fontSize: "1.4rem" }}>
+                        {serviceIndex + 1}. {service.serviceName}
+                      </h4>
+                      <p
+                        style={{
+                          margin: "0.4rem 0 0",
+                          fontSize: "1.08rem",
+                          lineHeight: 1.35,
+                        }}
+                      >
+                        <strong>Final Status:</strong>{" "}
+                        <span
+                          style={{
+                            color: getReportStatusColor(service.status),
+                            fontWeight: 700,
+                          }}
+                        >
+                          {toReportStatusLabel(service.status)}
+                        </span>
+                        <span style={{ marginLeft: "1.7rem" }}>
+                          <strong>Mode:</strong>{" "}
+                          {toReportModeLabel(service.verificationMode)}
+                        </span>
+                      </p>
+                      {service.comment?.trim() ? (
+                        <p style={{ margin: "0.15rem 0 0", fontSize: "1.08rem" }}>
+                          <strong>Comment:</strong> {service.comment}
+                        </p>
+                      ) : null}
+
+                      <div style={{ overflowX: "auto", marginTop: "0.42rem" }}>
+                        <table
+                          style={{
+                            width: "100%",
+                            minWidth: "690px",
+                            borderCollapse: "collapse",
+                            fontSize: "0.98rem",
+                          }}
+                        >
+                          <thead>
+                            <tr
+                              style={{
+                                borderTop: "1px solid #232323",
+                                borderBottom: "1px solid #666666",
+                                textAlign: "left",
+                              }}
+                            >
+                              <th style={{ padding: "0.3rem 0.2rem", width: "24%" }}>
+                                Date & Time
+                              </th>
+                              <th style={{ padding: "0.3rem 0.2rem", width: "12%" }}>
+                                Status
+                              </th>
+                              <th style={{ padding: "0.3rem 0.2rem", width: "10%" }}>
+                                Mode
+                              </th>
+                              <th style={{ padding: "0.3rem 0.2rem" }}>
+                                Attempt Details
+                              </th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {attempts.length === 0 ? (
+                              <tr style={{ borderBottom: "1px solid #666666" }}>
+                                <td
+                                  colSpan={4}
+                                  style={{
+                                    padding: "0.5rem 0.2rem",
+                                    color: "#4B5563",
+                                    fontStyle: "italic",
+                                  }}
+                                >
+                                  No verification attempts logged for this service.
+                                </td>
+                              </tr>
+                            ) : (
+                              attempts.map((attempt, attemptIndex) => (
+                                <tr
+                                  key={`${item._id}-preview-service-${serviceIndex}-attempt-${attemptIndex}`}
+                                  style={{
+                                    borderBottom: "1px solid #666666",
+                                    verticalAlign: "top",
+                                  }}
+                                >
+                                  <td style={{ padding: "0.35rem 0.2rem" }}>
+                                    {formatReportDateTime(attempt.attemptedAt)}
+                                  </td>
+                                  <td
+                                    style={{
+                                      padding: "0.35rem 0.2rem",
+                                      color: getReportAttemptStatusColor(
+                                        attempt.status,
+                                      ),
+                                      fontWeight: 700,
+                                    }}
+                                  >
+                                    {toReportAttemptStatusLabel(attempt.status)}
+                                  </td>
+                                  <td style={{ padding: "0.35rem 0.2rem" }}>
+                                    {toReportModeLabel(attempt.verificationMode)}
+                                  </td>
+                                  <td
+                                    style={{
+                                      padding: "0.35rem 0.2rem",
+                                      lineHeight: 1.35,
+                                    }}
+                                  >
+                                    <div>
+                                      <strong>Verifier:</strong>{" "}
+                                      {attempt.verifierName || "-"}
+                                    </div>
+                                    <div>
+                                      <strong>Manager:</strong>{" "}
+                                      {attempt.managerName || "-"}
+                                    </div>
+                                    {attempt.comment ? (
+                                      <div>
+                                        <strong>Note:</strong> {attempt.comment}
+                                      </div>
+                                    ) : null}
+                                  </td>
+                                </tr>
+                              ))
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                    </section>
+                  );
+                })}
+              </div>
+            </section>
+
+            <section
+              style={{
+                marginTop: "1.6rem",
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "flex-start",
+                gap: "1.2rem",
+                fontSize: "1.1rem",
+              }}
+            >
+              <div>
+                <div style={{ fontWeight: 700 }}>Created By:</div>
+                <div>{report.createdByName || "-"}</div>
+              </div>
+              <div style={{ textAlign: "right" }}>
+                <div style={{ fontWeight: 700 }}>Verified By:</div>
+                <div>{report.verifiedByName || "-"}</div>
+              </div>
+            </section>
+
+            <section
+              style={{
+                marginTop: "1.4rem",
+                border: "1px solid #777777",
+                padding: "0.88rem 0.95rem",
+                fontSize: "0.84rem",
+                lineHeight: 1.35,
+              }}
+            >
+              <p style={{ margin: 0, fontWeight: 700 }}>--END OF REPORT--</p>
+              <p style={{ margin: "0.25rem 0 0", fontWeight: 700 }}>
+                IMPORTANT NOTICE
+              </p>
+              {REPORT_NOTICE_PARAGRAPHS.map((paragraph) => (
+                <p
+                  key={`${item._id}-${paragraph.slice(0, 20)}`}
+                  style={{ margin: "0.38rem 0 0" }}
+                >
+                  {paragraph}
+                </p>
+              ))}
+
+              <div
+                style={{
+                  borderTop: "1px solid #777777",
+                  marginTop: "0.66rem",
+                  paddingTop: "0.5rem",
+                }}
+              >
+                <p style={{ margin: 0, fontWeight: 700 }}>QUESTIONS?</p>
+                <p style={{ margin: "0.2rem 0 0" }}>
+                  If you have any questions about this report, please feel free to
+                  contact us:
+                </p>
+                <p style={{ margin: "0.2rem 0 0" }}>
+                  Toll Free: 866-685-5177&nbsp;&nbsp;&nbsp;&nbsp;Tel:
+                  817-945-2289&nbsp;&nbsp;&nbsp;&nbsp;Fax:
+                  817-945-2297&nbsp;&nbsp;&nbsp;&nbsp;Email: support@cluso.in
+                </p>
+              </div>
+
+              <p
+                style={{
+                  margin: "0.45rem 0 0",
+                  fontSize: "0.72rem",
+                  textAlign: "right",
+                }}
+              >
+                Rev 3.2 (15322)
+              </p>
+            </section>
+
+            <p
+              style={{
+                margin: "1rem 0 0",
+                textAlign: "center",
+                color: "#555555",
+                fontSize: "1.15rem",
+              }}
+            >
+              Generated Report By ClusoInfolink
+            </p>
+          </div>
+        </article>
+      </div>
+    );
+  }
+
   function renderRequestSection(title: string, itemsByStatus: RequestItem[], emptyMessage: string) {
     return (
       <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden mb-6">
@@ -739,6 +1524,10 @@ function RequestsPageContent() {
                   const formSubmitted = item.candidateFormStatus === "submitted";
                   const isActionRowActive = selectedActionRowId === item._id;
                   const decisionWindow = getEnterpriseDecisionWindow(item, nowMs);
+                  const canViewSharedReport =
+                    item.status === "verified" &&
+                    Boolean(item.reportData) &&
+                    Boolean(item.reportMetadata?.customerSharedAt);
 
                   return (
                     <tr
@@ -838,6 +1627,7 @@ function RequestsPageContent() {
                                    : "bg-slate-50 border border-slate-200 text-slate-400 cursor-not-allowed"
                              }`}
                              onClick={() => {
+                               setActiveReportRequestId("");
                                setActiveResponseRequestId(item._id);
                                setIsRejectSelectorOpen(false);
                                setSelectedRejectedFieldKeys([]);
@@ -846,6 +1636,19 @@ function RequestsPageContent() {
                              disabled={!hasResponses}
                            >
                              {hasResponses ? "Review Data" : "No Data Yet"}
+                           </button>
+
+                           <button
+                             type="button"
+                             className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all shadow-sm ${
+                               canViewSharedReport
+                                 ? "bg-green-100 border border-green-300 text-green-800 hover:-translate-y-0.5 hover:bg-green-200 hover:border-green-400 hover:text-green-900 active:translate-y-0 active:scale-[0.98] active:bg-green-300 active:border-green-500 active:text-green-950"
+                                 : "bg-slate-50 border border-slate-200 text-slate-400 cursor-not-allowed"
+                             }`}
+                             onClick={() => openSharedReport(item)}
+                             disabled={!canViewSharedReport}
+                           >
+                             View Report
                            </button>
 
                            {item.status === "rejected" && (
@@ -1133,6 +1936,68 @@ function RequestsPageContent() {
       <div className="flex flex-col gap-6">
         {renderRequestSection("All Requests", filteredRequests, "No requests found for the selected filters.")}
       </div>
+
+      {activeReportRequest ? (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Shared verification report"
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(15, 23, 42, 0.56)",
+            zIndex: 1300,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: "1rem",
+          }}
+        >
+          <div
+            className="glass-card"
+            style={{
+              width: "min(1200px, calc(100vw - 2rem))",
+              maxHeight: "88vh",
+              overflowY: "auto",
+              padding: "1rem",
+              background: "#FFFFFF",
+            }}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "1rem", marginBottom: "0.95rem", flexWrap: "wrap" }}>
+              <div>
+                <h3 style={{ margin: 0, color: "#1E293B" }}>Generated Report Preview</h3>
+                <p style={{ margin: "0.35rem 0 0", color: "#64748B" }}>
+                  {activeReportRequest.candidateName} • {activeReportRequest.candidateEmail}
+                </p>
+              </div>
+              <div style={{ display: "inline-flex", alignItems: "center", gap: "0.55rem", flexWrap: "wrap", justifyContent: "flex-end" }}>
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={() => downloadSharedReport(activeReportRequest)}
+                  disabled={downloadingReportRequestId === activeReportRequest._id}
+                  style={{ padding: "0.42rem 0.75rem", fontSize: "0.84rem" }}
+                >
+                  {downloadingReportRequestId === activeReportRequest._id
+                    ? "Downloading..."
+                    : "Download PDF"}
+                </button>
+
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={closeSharedReportModal}
+                  style={{ padding: "0.42rem 0.72rem" }}
+                >
+                  <X size={16} />
+                </button>
+              </div>
+            </div>
+
+            {renderSharedReportPreview(activeReportRequest)}
+          </div>
+        </div>
+      ) : null}
 
       {activeResponseRequest ? (
         <div
