@@ -4,6 +4,7 @@ import { z } from "zod";
 import { getCustomerAuthFromRequest } from "@/lib/auth";
 import { connectMongo } from "@/lib/mongodb";
 import User from "@/lib/models/User";
+import { sendTeamCredentialEmail } from "@/lib/teamCredentialsMail";
 
 const MANAGEABLE_ROLES = ["delegate", "delegate_user"] as const;
 
@@ -112,6 +113,9 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Invalid account mapping." }, { status: 400 });
     }
 
+    const company = await User.findById(companyId).select("name").lean();
+    const companyName = company?.name?.trim() || "your organization";
+
     let roleToCreate = auth.role === "customer" ? "delegate" : "delegate_user";
     let createdByDelegate = auth.role === "delegate" ? auth.userId : null;
 
@@ -143,12 +147,29 @@ export async function POST(req: NextRequest) {
       createdByDelegate,
     });
 
+    const roleLabel = roleToCreate === "delegate" ? "Delegate" : "User";
+    const mailResult = await sendTeamCredentialEmail({
+      recipientName: parsed.data.name,
+      recipientEmail: email,
+      temporaryPassword: parsed.data.password,
+      roleLabel,
+      companyName,
+    });
+
+    const accountCreatedMessage =
+      roleToCreate === "delegate"
+        ? "Delegate created successfully."
+        : "User created successfully.";
+
+    const message = mailResult.sent
+      ? `${accountCreatedMessage} Login credentials email sent to ${email}.`
+      : `${accountCreatedMessage} Login email could not be sent. Please share credentials manually.`;
+
     return NextResponse.json(
       {
-        message:
-          roleToCreate === "delegate"
-            ? "Delegate created successfully."
-            : "User created successfully.",
+        message,
+        emailSent: mailResult.sent,
+        emailWarning: mailResult.sent ? null : mailResult.reason ?? "Unable to send login email.",
       },
       { status: 201 },
     );
