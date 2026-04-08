@@ -112,14 +112,6 @@ export default function TeamPage() {
   }, [selectedMemberId, teamMembers]);
 
   const selectedMember = teamMembers.find((member) => member.id === selectedMemberId) ?? null;
-  const teamRosterSubtitle =
-    me.role === "customer"
-      ? "Manage and view all registered delegate accounts underneath your organization."
-      : "View all users registered under your delegate account.";
-  const emptyTeamText =
-    me.role === "customer"
-      ? "You have not added any delegate logins yet."
-      : "No users are registered under this delegate yet.";
 
   if (loading || !me) {
     return (
@@ -130,6 +122,15 @@ export default function TeamPage() {
       </main>
     );
   }
+
+  const teamRosterSubtitle =
+    me.role === "customer"
+      ? "Manage and view all registered delegate accounts underneath your organization."
+      : "View all users registered under your delegate account.";
+  const emptyTeamText =
+    me.role === "customer"
+      ? "You have not added any delegate logins yet."
+      : "No users are registered under this delegate yet.";
 
   async function createDelegate(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
