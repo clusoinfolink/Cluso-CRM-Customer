@@ -51,7 +51,8 @@ export default function TeamPage() {
   const [updatingAccess, setUpdatingAccess] = useState(false);
 
   const canCreateUsers = me?.role === "customer" || me?.role === "delegate";
-  const canViewUsers = me?.role === "customer" || me?.role === "delegate";
+  const canViewUsers =
+    me?.role === "customer" || me?.role === "delegate" || me?.role === "delegate_user";
   const canEditAccess = me?.role === "customer";
 
   const loadTeamMembers = useCallback(async () => {
@@ -111,6 +112,14 @@ export default function TeamPage() {
   }, [selectedMemberId, teamMembers]);
 
   const selectedMember = teamMembers.find((member) => member.id === selectedMemberId) ?? null;
+  const teamRosterSubtitle =
+    me.role === "customer"
+      ? "Manage and view all registered delegate accounts underneath your organization."
+      : "View all users registered under your delegate account.";
+  const emptyTeamText =
+    me.role === "customer"
+      ? "You have not added any delegate logins yet."
+      : "No users are registered under this delegate yet.";
 
   if (loading || !me) {
     return (
@@ -551,7 +560,7 @@ export default function TeamPage() {
                     Team Roster
                   </h2>
                   <p className="text-sm text-slate-500 mt-1">
-                    Manage and view all registered delegate accounts underneath your organization.
+                    {teamRosterSubtitle}
                   </p>
                 </div>
               </div>
@@ -565,7 +574,7 @@ export default function TeamPage() {
                 <div className="p-12 text-center flex flex-col items-center">
                   <Users className="w-12 h-12 text-slate-300 mb-3" />
                   <p className="text-slate-600 font-medium">No accounts found</p>
-                  <p className="text-sm text-slate-400 mt-1">You have not added any delegate logins yet.</p>
+                  <p className="text-sm text-slate-400 mt-1">{emptyTeamText}</p>
                 </div>
               ) : (
                 <div className="overflow-x-auto">

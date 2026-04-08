@@ -38,7 +38,11 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    if (auth.role !== "customer" && auth.role !== "delegate") {
+    if (
+      auth.role !== "customer" &&
+      auth.role !== "delegate" &&
+      auth.role !== "delegate_user"
+    ) {
       return NextResponse.json(
         { error: "You do not have access to team member data." },
         { status: 403 },
@@ -52,10 +56,32 @@ export async function GET(req: NextRequest) {
 
     await connectMongo();
 
-    const members = await User.find({
-      parentCustomer: companyId,
-      role: { $in: MANAGEABLE_ROLES },
-    })
+    let delegateScopeId = "";
+    if (auth.role === "delegate") {
+      delegateScopeId = auth.userId;
+    } else if (auth.role === "delegate_user") {
+      const currentUser = await User.findById(auth.userId)
+        .select("createdByDelegate")
+        .lean();
+
+      delegateScopeId = currentUser?.createdByDelegate
+        ? String(currentUser.createdByDelegate)
+        : "";
+    }
+
+    const membersFilter =
+      auth.role === "delegate" || auth.role === "delegate_user"
+        ? {
+            parentCustomer: companyId,
+            role: "delegate_user",
+            createdByDelegate: delegateScopeId,
+          }
+        : {
+            parentCustomer: companyId,
+            role: { $in: MANAGEABLE_ROLES },
+          };
+
+    const members = await User.find(membersFilter)
       .sort({ createdAt: -1 })
       .lean();
 

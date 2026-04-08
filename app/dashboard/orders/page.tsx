@@ -16,6 +16,7 @@ export default function OrdersPage() {
   const [candidatePhone, setCandidatePhone] = useState("");
   const [selectedServiceIds, setSelectedServiceIds] = useState<string[]>([]);
   const [serviceConfigs, setServiceConfigs] = useState<Record<string, string>>({});
+  const [serviceSearch, setServiceSearch] = useState("");
   const [message, setMessage] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
@@ -53,16 +54,6 @@ export default function OrdersPage() {
       window.clearTimeout(timer);
     };
   }, [visibleServices]);
-
-  if (loading || !me) {
-    return (
-      <main className="portal-shell">
-        <BlockCard tone="muted">
-          <p className="block-subtitle">Loading order workspace...</p>
-        </BlockCard>
-      </main>
-    );
-  }
 
   function toggleServiceSelection(serviceId: string, checked: boolean) {
     setSelectedServiceIds((prev) => {
@@ -109,6 +100,31 @@ export default function OrdersPage() {
       .filter((name): name is string => Boolean(name));
 
     return [...new Set(resolvedNames)];
+  }
+
+  const normalizedServiceSearch = serviceSearch.trim().toLowerCase();
+  const filteredVisibleServices = useMemo(() => {
+    if (!normalizedServiceSearch) {
+      return visibleServices;
+    }
+
+    return visibleServices.filter((service) => {
+      const includedServiceNamesText = getIncludedServiceNames(service)
+        .join(" ")
+        .toLowerCase();
+      const searchableText = `${service.serviceName} ${includedServiceNamesText}`.toLowerCase();
+      return searchableText.includes(normalizedServiceSearch);
+    });
+  }, [normalizedServiceSearch, serviceNameById, visibleServices]);
+
+  if (loading || !me) {
+    return (
+      <main className="portal-shell">
+        <BlockCard tone="muted">
+          <p className="block-subtitle">Loading order workspace...</p>
+        </BlockCard>
+      </main>
+    );
   }
 
   async function submitOrder(e: FormEvent<HTMLFormElement>) {
@@ -204,8 +220,32 @@ export default function OrdersPage() {
             {visibleServices.length ? (
               <div style={{ marginTop: "1rem" }}>
                 <label className="label">Select Services</label>
-                <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem", marginTop: "0.5rem" }}>
-                  {visibleServices.map((service) => (
+                <input
+                  className="input"
+                  placeholder="Search services by name"
+                  value={serviceSearch}
+                  onChange={(e) => setServiceSearch(e.target.value)}
+                  style={{ marginTop: "0.5rem" }}
+                />
+
+                {filteredVisibleServices.length === 0 ? (
+                  <div style={{ marginTop: "0.7rem", color: "#6B7280", fontSize: "0.9rem" }}>
+                    No services match your search.
+                  </div>
+                ) : null}
+
+                <div
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: "0.75rem",
+                    marginTop: "0.7rem",
+                    maxHeight: "30rem",
+                    overflowY: "auto",
+                    paddingRight: "0.4rem",
+                  }}
+                >
+                  {filteredVisibleServices.map((service) => (
                     (() => {
                       const includedServiceNames = getIncludedServiceNames(service);
 

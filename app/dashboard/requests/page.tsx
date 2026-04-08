@@ -140,6 +140,8 @@ const REPORT_NOTICE_PARAGRAPHS = [
   "This report is furnished in strict confidence for your exclusive use of legitimate business purposes and for no other purpose, and shall not be reproduced in whole or in part in any manner whatsoever. CLUSO INFOLINK is a private investigation company licensed by the Texas Private Security Bureau (TX License Number A16821). Contact the Texas PSB for regulatory information or complaints: TX Private Security, MSC 0241, PO Box 4087, Austin TX 78773-0001 Tel: 512-424-7298 Fax: 512-424-7728.",
 ] as const;
 
+const REQUESTS_PER_PAGE = 15;
+
 type ReportPreviewAttempt = {
   attemptedAt: string;
   status: string;
@@ -461,6 +463,7 @@ function RequestsPageContent() {
   const [rejectionComment, setRejectionComment] = useState("");
   const [rejectingRequestId, setRejectingRequestId] = useState("");
   const [decisioningRequestId, setDecisioningRequestId] = useState("");
+  const [tablePage, setTablePage] = useState(1);
 
   const [editingRequestId, setEditingRequestId] = useState("");
   const [editCandidateName, setEditCandidateName] = useState("");
@@ -551,6 +554,27 @@ function RequestsPageContent() {
     return baseFilteredRequests.filter((item) => item.status === quickFilter);
   }, [baseFilteredRequests, quickFilter]);
 
+  const totalTablePages = useMemo(
+    () => Math.max(1, Math.ceil(filteredRequests.length / REQUESTS_PER_PAGE)),
+    [filteredRequests.length],
+  );
+
+  const paginatedRequests = useMemo(() => {
+    const startIndex = (tablePage - 1) * REQUESTS_PER_PAGE;
+    return filteredRequests.slice(startIndex, startIndex + REQUESTS_PER_PAGE);
+  }, [filteredRequests, tablePage]);
+
+  const currentPageStart = filteredRequests.length
+    ? (tablePage - 1) * REQUESTS_PER_PAGE + 1
+    : 0;
+  const currentPageEnd = Math.min(tablePage * REQUESTS_PER_PAGE, filteredRequests.length);
+
+  useEffect(() => {
+    if (tablePage > totalTablePages) {
+      setTablePage(totalTablePages);
+    }
+  }, [tablePage, totalTablePages]);
+
   function toggleQuickFilter(nextFilter: "all" | RequestStatus | "forms") {
     setQuickFilter((current) => (current === nextFilter ? "all" : nextFilter));
   }
@@ -571,6 +595,10 @@ function RequestsPageContent() {
       setCreatedDateTo("");
       setQuickFilter("all");
       setHighlightedRequestId(focusRequestId);
+      const focusedRequestIndex = items.findIndex((item) => item._id === focusRequestId);
+      if (focusedRequestIndex >= 0) {
+        setTablePage(Math.floor(focusedRequestIndex / REQUESTS_PER_PAGE) + 1);
+      }
     }, 0);
 
     const scrollTimer = window.setTimeout(() => {
@@ -1488,19 +1516,24 @@ function RequestsPageContent() {
     );
   }
 
-  function renderRequestSection(title: string, itemsByStatus: RequestItem[], emptyMessage: string) {
+  function renderRequestSection(
+    title: string,
+    itemsByStatus: RequestItem[],
+    emptyMessage: string,
+    totalCount = itemsByStatus.length,
+  ) {
     return (
       <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden mb-6">
         <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
           <h3 style={{ fontSize: "0.98rem", color: "#2D405E", margin: 0, fontWeight: 600, display: "flex", alignItems: "center", gap: "0.4rem" }}>
             {title}
             <span className="bg-blue-100/50 text-blue-700 px-2 py-0.5 rounded-full text-xs font-semibold">
-              {itemsByStatus.length}
+              {totalCount}
             </span>
           </h3>
         </div>
 
-        {itemsByStatus.length === 0 ? (
+        {totalCount === 0 ? (
           <div className="p-8 text-center text-slate-500 text-sm italic">
             {emptyMessage}
           </div>
@@ -1934,7 +1967,45 @@ function RequestsPageContent() {
       </BlockCard>
 
       <div className="flex flex-col gap-6">
-        {renderRequestSection("All Requests", filteredRequests, "No requests found for the selected filters.")}
+        {renderRequestSection(
+          "All Requests",
+          paginatedRequests,
+          "No requests found for the selected filters.",
+          filteredRequests.length,
+        )}
+
+        {filteredRequests.length > 0 ? (
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 px-1 pb-2">
+            <span className="text-xs text-slate-500">
+              Showing {currentPageStart}-{currentPageEnd} of {filteredRequests.length} request
+              {filteredRequests.length === 1 ? "" : "s"}
+            </span>
+
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                className="px-3 py-1.5 rounded-md border border-slate-300 text-slate-700 bg-white text-xs font-semibold hover:bg-slate-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                onClick={() => setTablePage((prev) => Math.max(1, prev - 1))}
+                disabled={tablePage <= 1}
+              >
+                Previous
+              </button>
+
+              <span className="text-xs font-semibold text-slate-600 min-w-[92px] text-center">
+                Page {tablePage} of {totalTablePages}
+              </span>
+
+              <button
+                type="button"
+                className="px-3 py-1.5 rounded-md border border-slate-300 text-slate-700 bg-white text-xs font-semibold hover:bg-slate-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                onClick={() => setTablePage((prev) => Math.min(totalTablePages, prev + 1))}
+                disabled={tablePage >= totalTablePages}
+              >
+                Next
+              </button>
+            </div>
+          </div>
+        ) : null}
       </div>
 
       {activeReportRequest ? (

@@ -29,7 +29,7 @@ function resolveCustomerPortalUrl() {
   }
 
   return process.env.NODE_ENV === "production"
-    ? "https://cluso-customer.vercel.app"
+    ? "https://cluso-crm-customer.vercel.app/"
     : "http://localhost:3011";
 }
 
