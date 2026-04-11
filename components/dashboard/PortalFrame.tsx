@@ -12,6 +12,7 @@ import {
   LogOut,
   Settings,
   LayoutDashboard,
+  ReceiptText,
   User,
   type LucideIcon,
 } from "lucide-react";
@@ -37,6 +38,7 @@ const navItems: IconNavItem[] = [
   { href: "/dashboard", label: "Overview", icon: LayoutDashboard },
   { href: "/dashboard/orders", label: "Orders", icon: Clipboard },
   { href: "/dashboard/requests", label: "Requests", icon: ListChecks },
+  { href: "/dashboard/invoices", label: "Invoices", icon: ReceiptText },
   { href: "/dashboard/team", label: "Team", icon: ListChecks },
   { href: "/dashboard/settings", label: "Settings", icon: Settings },
 ];

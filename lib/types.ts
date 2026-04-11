@@ -125,6 +125,53 @@ export type InvoiceSnapshot = {
   companyName?: string;
 };
 
+export type InvoicePartyDetails = {
+  companyName: string;
+  loginEmail: string;
+  gstin: string;
+  cinRegistrationNumber: string;
+  address: string;
+  invoiceEmail: string;
+  billingSameAsCompany: boolean;
+  billingAddress: string;
+};
+
+export type InvoiceLineItem = {
+  serviceId: string;
+  serviceName: string;
+  usageCount: number;
+  price: number;
+  lineTotal: number;
+  currency: SupportedCurrency;
+};
+
+export type InvoiceCurrencyTotal = {
+  currency: SupportedCurrency;
+  subtotal: number;
+};
+
+export type InvoiceRecord = {
+  id: string;
+  invoiceNumber: string;
+  billingMonth: string;
+  gstEnabled: boolean;
+  gstRate: number;
+  customerId: string;
+  customerName: string;
+  customerEmail: string;
+  enterpriseDetails: InvoicePartyDetails;
+  clusoDetails: InvoicePartyDetails;
+  lineItems: InvoiceLineItem[];
+  totalsByCurrency: InvoiceCurrencyTotal[];
+  generatedByName: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type InvoiceWorkspaceResponse = {
+  invoices: InvoiceRecord[];
+};
+
 export type CandidateAnswer = {
   fieldKey?: string;
   question: string;
