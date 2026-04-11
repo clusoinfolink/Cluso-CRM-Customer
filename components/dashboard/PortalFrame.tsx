@@ -9,6 +9,7 @@ import {
   CheckCheck,
   Clipboard,
   ListChecks,
+  MoreHorizontal,
   LogOut,
   Settings,
   LayoutDashboard,
@@ -66,6 +67,39 @@ async function fetchRequestsForNotifications() {
 }
 
 function getCustomerNotificationContent(item: RequestItem) {
+  const appeal = item.reverificationAppeal;
+  if (appeal) {
+    const appealedServiceNames = (appeal.services ?? [])
+      .map((service) => service.serviceName)
+      .filter((name) => typeof name === "string" && name.trim().length > 0);
+    if (appealedServiceNames.length === 0 && appeal.serviceName?.trim()) {
+      appealedServiceNames.push(appeal.serviceName.trim());
+    }
+    const appealedServicesLabel = appealedServiceNames.length > 0 ? appealedServiceNames.join(", ") : "requested services";
+
+    if (appeal.status === "open") {
+      return {
+        title: "Reverification appeal submitted",
+        detail: `${item.candidateName} was appealed for ${appealedServicesLabel}`,
+      };
+    }
+
+    if (appeal.status === "resolved") {
+      const resolvedSource = appeal.resolvedAt || item.reportMetadata?.customerSharedAt || "";
+      const parsedResolvedAt = Date.parse(resolvedSource);
+      const resolvedDateLabel = Number.isNaN(parsedResolvedAt)
+        ? ""
+        : new Date(parsedResolvedAt).toLocaleDateString("en-IN");
+
+      return {
+        title: "Request reverified",
+        detail: resolvedDateLabel
+          ? `${item.candidateName} was reverified for ${appealedServicesLabel} on ${resolvedDateLabel}`
+          : `${item.candidateName} was reverified for ${appealedServicesLabel}`,
+      };
+    }
+  }
+
   if (item.status === "verified") {
     return {
       title: "Request verified",
@@ -108,6 +142,7 @@ export function PortalFrame({ me, onLogout, title, subtitle, children }: PortalF
   const visibleNav = navItems;
   const notificationWrapRef = useRef<HTMLDivElement | null>(null);
   const [isNotificationOpen, setIsNotificationOpen] = useState(false);
+  const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
   const [clearedNotificationIds, setClearedNotificationIds] = useState<string[]>([]);
 
   const requestsQuery = useQuery<RequestItem[]>({
@@ -127,11 +162,21 @@ export function PortalFrame({ me, onLogout, title, subtitle, children }: PortalF
     return (requestsQuery.data ?? [])
       .map((item) => {
         const parsedCreatedAt = Date.parse(item.createdAt);
-        const createdAtMs = Number.isNaN(parsedCreatedAt) ? 0 : parsedCreatedAt;
+        const requestCreatedAtMs = Number.isNaN(parsedCreatedAt) ? 0 : parsedCreatedAt;
+        const parsedAppealEventAt =
+          item.reverificationAppeal?.status === "open"
+            ? Date.parse(item.reverificationAppeal.submittedAt)
+            : item.reverificationAppeal?.status === "resolved"
+              ? Date.parse(item.reverificationAppeal.resolvedAt || item.reportMetadata?.customerSharedAt || "")
+              : Number.NaN;
+        const createdAtMs = Number.isNaN(parsedAppealEventAt) ? requestCreatedAtMs : parsedAppealEventAt;
         const content = getCustomerNotificationContent(item);
+        const appealKey = item.reverificationAppeal
+          ? `${item.reverificationAppeal.status}:${item.reverificationAppeal.submittedAt}:${item.reverificationAppeal.resolvedAt ?? ""}:${item.reportMetadata?.customerSharedAt ?? ""}`
+          : "none";
 
         return {
-          id: `${item._id}:${item.status}`,
+          id: `${item._id}:${item.status}:${appealKey}`,
           requestId: item._id,
           title: content.title,
           detail: content.detail,
@@ -250,7 +295,11 @@ export function PortalFrame({ me, onLogout, title, subtitle, children }: PortalF
 
   return (
     <div className="admin-layout">
-      <aside className="admin-sidebar" aria-label="Portal navigation menu">
+      <aside
+        id="customer-mobile-nav"
+        className={`admin-sidebar ${isMobileNavOpen ? "mobile-open" : ""}`}
+        aria-label="Portal navigation menu"
+      >
         <div className="sidebar-brand flex items-center justify-center p-4">
           <Image
             src="/images/cluso-infolink-logo.png"
@@ -269,6 +318,7 @@ export function PortalFrame({ me, onLogout, title, subtitle, children }: PortalF
               <Link
                 key={item.href}
                 href={item.href}
+                onClick={() => setIsMobileNavOpen(false)}
                 className={`portal-nav-link ${isNavActive(pathname, item.href) ? "active" : ""}`}
               >
                 <Icon size={18} />
@@ -279,13 +329,34 @@ export function PortalFrame({ me, onLogout, title, subtitle, children }: PortalF
         </nav>
       </aside>
 
+      {isMobileNavOpen ? (
+        <button
+          type="button"
+          className="portal-mobile-backdrop"
+          aria-label="Close navigation menu"
+          onClick={() => setIsMobileNavOpen(false)}
+        />
+      ) : null}
+
       <main className="admin-main">
         <header className="admin-topbar">
-          <div style={{ display: "grid", gap: "0.15rem" }}>
-            <h1 className="admin-topbar-title">{title || "Enterprise Panel"}</h1>
-            {subtitle ? (
-              <p style={{ margin: 0, color: "#6B7A90", fontSize: "0.85rem" }}>{subtitle}</p>
-            ) : null}
+          <div className="portal-topbar-leading" style={{ display: "flex", alignItems: "center", gap: "0.65rem" }}>
+            <button
+              type="button"
+              className="portal-nav-overflow-trigger"
+              onClick={() => setIsMobileNavOpen((prev) => !prev)}
+              aria-label="More options"
+              aria-expanded={isMobileNavOpen}
+              aria-controls="customer-mobile-nav"
+            >
+              <MoreHorizontal size={18} />
+            </button>
+            <div style={{ display: "grid", gap: "0.15rem" }}>
+              <h1 className="admin-topbar-title">{title || "Enterprise Panel"}</h1>
+              {subtitle ? (
+                <p style={{ margin: 0, color: "#6B7A90", fontSize: "0.85rem" }}>{subtitle}</p>
+              ) : null}
+            </div>
           </div>
           <div className="account-actions-wrap">
             <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", fontWeight: 500 }}>

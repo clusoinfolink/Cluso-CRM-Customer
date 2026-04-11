@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { AreaChart, Download, FileText, ReceiptText, TrendingUp, Calendar, FileSearch, Building, PieChart } from "lucide-react";
 import { PortalFrame } from "@/components/dashboard/PortalFrame";
 import { BlockCard, BlockTitle } from "@/components/ui/blocks"; 
@@ -222,6 +222,8 @@ export default function CustomerInvoicesPage() {
   const [selectedBillingMonth, setSelectedBillingMonth] = useState("");
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [selectedInvoiceId, setSelectedInvoiceId] = useState<string | null>(null);
+  const [overviewCardIndex, setOverviewCardIndex] = useState(0);
+  const overviewCardRefs = useRef<Array<HTMLDivElement | null>>([]);
 
   useEffect(() => {
     if (me?.id) fetchInvoices();
@@ -265,6 +267,40 @@ export default function CustomerInvoicesPage() {
       setMessage(e.message || "Error building PDF.");
     }
     setDownloadingId(null);
+  }
+
+  function handleOverviewDotClick(index: number) {
+    setOverviewCardIndex(index);
+    overviewCardRefs.current[index]?.scrollIntoView({
+      behavior: "smooth",
+      block: "nearest",
+      inline: "start",
+    });
+  }
+
+  function handleOverviewScroll(event: React.UIEvent<HTMLElement>) {
+    const container = event.currentTarget;
+    const cards = container.querySelectorAll<HTMLElement>(".customer-invoice-overview-card");
+    if (cards.length === 0) {
+      return;
+    }
+
+    const containerCenter = container.scrollLeft + container.clientWidth / 2;
+    let nearestIndex = 0;
+    let nearestDistance = Number.POSITIVE_INFINITY;
+
+    cards.forEach((card, index) => {
+      const cardCenter = card.offsetLeft + card.clientWidth / 2;
+      const distance = Math.abs(cardCenter - containerCenter);
+      if (distance < nearestDistance) {
+        nearestDistance = distance;
+        nearestIndex = index;
+      }
+    });
+
+    if (nearestIndex !== overviewCardIndex) {
+      setOverviewCardIndex(nearestIndex);
+    }
   }
 
   const filteredInvoices = useMemo(() => {
@@ -515,40 +551,58 @@ export default function CustomerInvoicesPage() {
       {message ? <p className={`inline-alert ${getAlertTone(message)}`}>{message}</p> : null}
 
       {/* Top Stats - Redesigned */}
-      <section style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: "1.25rem", marginBottom: "1.8rem" }}>
+      <section className="customer-invoice-overview" onScroll={handleOverviewScroll} style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: "1.25rem", marginBottom: "1.8rem" }}>
         
-        <div style={{ background: "linear-gradient(135deg, #0F172A 0%, #1E293B 100%)", borderRadius: "16px", padding: "1.5rem", color: "white", boxShadow: "0 10px 25px rgba(15,23,42,0.12)", display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+        <div
+          ref={(element) => {
+            overviewCardRefs.current[0] = element;
+          }}
+          className="customer-invoice-overview-card"
+          style={{ background: "linear-gradient(135deg, #FFFFFF 0%, #F8FAFC 100%)", border: "1px solid #E2E8F0", borderRadius: "16px", padding: "1.5rem", color: "#1E293B", boxShadow: "0 8px 18px rgba(15,23,42,0.06)", display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}
+        >
           <div>
-            <p style={{ margin: 0, color: "#94A3B8", fontSize: "0.85rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em" }}>Generated Invoices</p>
+            <p style={{ margin: 0, color: "#64748B", fontSize: "0.85rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em" }}>Generated Invoices</p>
             <p style={{ margin: "0.4rem 0 0", fontSize: "2.4rem", fontWeight: 800, lineHeight: 1 }}>{invoiceTotal}</p>
-            <p style={{ margin: "0.4rem 0 0", color: "#CBD5E1", fontSize: "0.82rem" }}>Total available for account</p>
+            <p style={{ margin: "0.4rem 0 0", color: "#475569", fontSize: "0.82rem" }}>Total available for account</p>
           </div>
-          <div style={{ background: "rgba(255,255,255,0.1)", padding: "0.8rem", borderRadius: "14px" }}>
-            <ReceiptText size={24} color="#38BDF8" />
+          <div style={{ background: "#EEF2F7", border: "1px solid #E2E8F0", padding: "0.8rem", borderRadius: "14px" }}>
+            <ReceiptText size={24} color="#334155" />
           </div>
         </div>
 
-        <div style={{ background: "linear-gradient(135deg, #1D4ED8 0%, #2563EB 100%)", borderRadius: "16px", padding: "1.5rem", color: "white", boxShadow: "0 10px 25px rgba(29,78,216,0.15)", display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+        <div
+          ref={(element) => {
+            overviewCardRefs.current[1] = element;
+          }}
+          className="customer-invoice-overview-card"
+          style={{ background: "linear-gradient(135deg, #F8FBFF 0%, #EDF5FF 100%)", border: "1px solid #D9E8FF", borderRadius: "16px", padding: "1.5rem", color: "#1E293B", boxShadow: "0 8px 18px rgba(37,99,235,0.08)", display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}
+        >
           <div>
-            <p style={{ margin: 0, color: "#93C5FD", fontSize: "0.85rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em" }}>Total Requests</p>
+            <p style={{ margin: 0, color: "#42638E", fontSize: "0.85rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em" }}>Total Requests</p>
             <p style={{ margin: "0.4rem 0 0", fontSize: "2.4rem", fontWeight: 800, lineHeight: 1 }}>{requestTotal}</p>
-            <p style={{ margin: "0.4rem 0 0", color: "#DBEAFE", fontSize: "0.82rem" }}>Verified candidates in workspace</p>
+            <p style={{ margin: "0.4rem 0 0", color: "#5B7CA8", fontSize: "0.82rem" }}>Verified candidates in workspace</p>
           </div>
-          <div style={{ background: "rgba(255,255,255,0.15)", padding: "0.8rem", borderRadius: "14px" }}>
-            <FileText size={24} color="#DBEAFE" />
+          <div style={{ background: "#E3EEFF", border: "1px solid #CFE0FF", padding: "0.8rem", borderRadius: "14px" }}>
+            <FileText size={24} color="#2563EB" />
           </div>
         </div>
 
-        <div style={{ background: "linear-gradient(135deg, #6D28D9 0%, #7C3AED 100%)", borderRadius: "16px", padding: "1.5rem", color: "white", boxShadow: "0 10px 25px rgba(109,40,217,0.15)", display: "flex", flex: 1 }}>
+        <div
+          ref={(element) => {
+            overviewCardRefs.current[2] = element;
+          }}
+          className="customer-invoice-overview-card"
+          style={{ background: "linear-gradient(135deg, #FCFCFF 0%, #F4F4FF 100%)", border: "1px solid #E5E7FF", borderRadius: "16px", padding: "1.5rem", color: "#1E293B", boxShadow: "0 8px 18px rgba(99,102,241,0.07)", display: "flex", flex: 1 }}
+        >
           <div style={{ flex: 1 }}>
-            <p style={{ margin: 0, color: "#C4B5FD", fontSize: "0.85rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em" }}>Total Amount To Be Paid</p>
+            <p style={{ margin: 0, color: "#6B5EA8", fontSize: "0.85rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em" }}>Total Amount To Be Paid</p>
             {invoiceTotals.length === 0 ? (
-              <p style={{ margin: "0.4rem 0 0", color: "#EDE9FE", fontSize: "0.85rem" }}>No invoice totals yet.</p>
+              <p style={{ margin: "0.4rem 0 0", color: "#6B7280", fontSize: "0.85rem" }}>No invoice totals yet.</p>
             ) : (
               <div style={{ display: "grid", gap: "0.6rem", marginTop: "0.7rem", flex: 1 }}>
                 {invoiceTotals.map((entry) => (
-                  <div key={entry.currency} style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", borderBottom: "1px solid rgba(255,255,255,0.12)", paddingBottom: "0.4rem" }}>
-                    <div style={{ textAlign: "right", color: "white", fontWeight: 800, fontSize: "1.2rem" }}>
+                  <div key={entry.currency} style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", borderBottom: "1px solid #E2E8F0", paddingBottom: "0.4rem" }}>
+                    <div style={{ textAlign: "right", color: "#1E293B", fontWeight: 800, fontSize: "1.2rem" }}>
                       {formatMoney(entry.total, entry.currency)}
                     </div>
                   </div>
@@ -556,68 +610,82 @@ export default function CustomerInvoicesPage() {
               </div>
             )}
           </div>
-          <div style={{ background: "rgba(255,255,255,0.15)", padding: "0.8rem", borderRadius: "14px", marginLeft: "1.5rem", alignSelf: "flex-start" }}>
-            <span style={{ color: "#DDD6FE", fontSize: "1.6rem", fontWeight: 800, lineHeight: 1 }}>
+          <div style={{ background: "#EEEAFE", border: "1px solid #DDD6FE", padding: "0.8rem", borderRadius: "14px", marginLeft: "1.5rem", alignSelf: "flex-start" }}>
+            <span style={{ color: "#6D28D9", fontSize: "1.6rem", fontWeight: 800, lineHeight: 1 }}>
               {totalAmountCardSymbol}
             </span>
           </div>
         </div>
       </section>
 
+      <div className="customer-invoice-overview-dots" aria-label="Overview cards">
+        {["Generated Invoices", "Total Requests", "Total Amount To Be Paid"].map((label, index) => (
+          <button
+            key={label}
+            type="button"
+            className={`customer-invoice-overview-dot ${overviewCardIndex === index ? "is-active" : ""}`}
+            onClick={() => handleOverviewDotClick(index)}
+            aria-label={`Show ${label}`}
+            aria-pressed={overviewCardIndex === index}
+          />
+        ))}
+      </div>
+
       {/* Main Master-Detail Layout */}
-      <section style={{ display: "flex", flexWrap: "wrap", gap: "1.5rem", alignItems: "flex-start", marginBottom: "3rem" }}>
+      <section className="customer-invoice-layout" style={{ display: "flex", flexWrap: "wrap", gap: "1.5rem", alignItems: "flex-start", marginBottom: "3rem" }}>
         
         {/* Left Nav */}
-        <div style={{ flex: "1 1 360px", minWidth: "320px", display: "flex", flexDirection: "column", gap: "1.2rem" }}>
-          
-          {/* Timeline Section */}
-          <BlockCard>
-            <BlockTitle
-              icon={<AreaChart size={14} color="#0EA5E9" />}
-              title="Day-Wise Request Attempts"
-              subtitle={`Request attempts made day by day for the last ${CHART_DAYS} days.`}
-              action={
-                <span className="neo-badge" style={{ gap: "0.3rem", background: "#EFF6FF", color: "#1D4ED8", border: "1px solid #BFDBFE" }}>
-                  <TrendingUp size={13} strokeWidth={2.5} />
-                  Live Trend
-                </span>
-              }
-            />
-            <div style={{ marginTop: "1rem" }}>
-              <TimelineChart points={timelinePoints} />
-            </div>
-          </BlockCard>
-
-          <div style={{ background: "white", border: "1px solid #E2E8F0", borderRadius: "14px", padding: "1.2rem", boxShadow: "0 4px 6px -1px rgba(0,0,0,0.03)" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "1rem" }}>
-              <div style={{ background: "#F1F5F9", padding: "0.4rem", borderRadius: "8px" }}>
-                <Calendar size={16} color="#475569" />
-              </div>
-              <h3 style={{ margin: 0, fontSize: "1.05rem", color: "#1E293B", fontWeight: 700 }}>Billing Period</h3>
-            </div>
-            
-            <div style={{ position: "relative", marginBottom: "1rem" }}>
-              <input
-                id="customer-invoice-month-filter"
-                className="input"
-                type="month"
-                value={selectedBillingMonth}
-                onChange={(event) => setSelectedBillingMonth(event.target.value)}
-                style={{ width: "100%", padding: "0.6rem 0.8rem", borderRadius: "8px", border: "1px solid #CBD5E1", fontSize: "0.9rem" }}
+        <div className="customer-invoice-left" style={{ flex: "1 1 360px", minWidth: "320px", display: "flex", flexDirection: "column", gap: "1.2rem" }}>
+          <div className="customer-invoice-tools-row">
+            {/* Timeline Section */}
+            <BlockCard>
+              <BlockTitle
+                icon={<AreaChart size={14} color="#0EA5E9" />}
+                title="Day-Wise Request Attempts"
+                subtitle={`Request attempts made day by day for the last ${CHART_DAYS} days.`}
+                action={
+                  <span className="neo-badge" style={{ gap: "0.3rem", background: "#EFF6FF", color: "#1D4ED8", border: "1px solid #BFDBFE" }}>
+                    <TrendingUp size={13} strokeWidth={2.5} />
+                    Live Trend
+                  </span>
+                }
               />
-            </div>
-            
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <span style={{ color: "#64748B", fontSize: "0.85rem" }}>
-                Showing invoices for <strong>{selectedBillingMonth ? formatBillingMonth(selectedBillingMonth) : "All Months"}</strong>
-              </span>
-              <span style={{ fontSize: "0.75rem", fontWeight: 700, background: "#F1F5F9", color: "#475569", padding: "0.2rem 0.6rem", borderRadius: "20px" }}>
-                {filteredInvoices.length} results
-              </span>
+              <div style={{ marginTop: "1rem" }}>
+                <TimelineChart points={timelinePoints} />
+              </div>
+            </BlockCard>
+
+            <div className="customer-invoice-period-card" style={{ background: "white", border: "1px solid #E2E8F0", borderRadius: "14px", padding: "1.2rem", boxShadow: "0 4px 6px -1px rgba(0,0,0,0.03)" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "1rem" }}>
+                <div style={{ background: "#F1F5F9", padding: "0.4rem", borderRadius: "8px" }}>
+                  <Calendar size={16} color="#475569" />
+                </div>
+                <h3 style={{ margin: 0, fontSize: "1.05rem", color: "#1E293B", fontWeight: 700 }}>Billing Period</h3>
+              </div>
+              
+              <div style={{ position: "relative", marginBottom: "1rem" }}>
+                <input
+                  id="customer-invoice-month-filter"
+                  className="input"
+                  type="month"
+                  value={selectedBillingMonth}
+                  onChange={(event) => setSelectedBillingMonth(event.target.value)}
+                  style={{ width: "100%", padding: "0.6rem 0.8rem", borderRadius: "8px", border: "1px solid #CBD5E1", fontSize: "0.9rem" }}
+                />
+              </div>
+              
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span style={{ color: "#64748B", fontSize: "0.85rem" }}>
+                  Showing invoices for <strong>{selectedBillingMonth ? formatBillingMonth(selectedBillingMonth) : "All Months"}</strong>
+                </span>
+                <span style={{ fontSize: "0.75rem", fontWeight: 700, background: "#F1F5F9", color: "#475569", padding: "0.2rem 0.6rem", borderRadius: "20px" }}>
+                  {filteredInvoices.length} results
+                </span>
+              </div>
             </div>
           </div>
 
-          <div style={{ display: "flex", flexDirection: "column", gap: "0.8rem" }}>
+          <div className="customer-invoice-list" style={{ display: "flex", flexDirection: "column", gap: "0.8rem" }}>
             {filteredInvoices.length === 0 ? (
               <div style={{ textAlign: "center", padding: "2rem 1rem", border: "1px dashed #CBD5E1", borderRadius: "12px", background: "#F8FAFC" }}>
                 <ReceiptText size={28} color="#94A3B8" style={{ margin: "0 auto 0.5rem" }} />
@@ -687,11 +755,11 @@ export default function CustomerInvoicesPage() {
         </div>
 
         {/* Right Main Content */}
-        <div style={{ flex: "2 1 640px", display: "flex", flexDirection: "column", gap: "1.5rem", minWidth: 0 }}>
+        <div className="customer-invoice-right" style={{ flex: "2 1 640px", display: "flex", flexDirection: "column", gap: "1.5rem", minWidth: 0 }}>
           {selectedInvoice ? (
             <>
               {/* Inject Previous Invoice Preview Block here implicitly from code */}
-              <BlockCard>
+              <BlockCard className="customer-invoice-preview-card">
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1.2rem" }}>
                   <h3 style={{ margin: 0, color: "#1E293B", fontSize: "1.2rem" }}>Invoice Preview</h3>
                   <button
@@ -719,7 +787,7 @@ export default function CustomerInvoicesPage() {
                 <div style={{ overflowX: "auto" }}>
                   <article
                 style={{
-                  minWidth: "880px",
+                  minWidth: "760px",
                   background: "#E8E8E8",
                   border: "3px solid #8E1525",
                   padding: "4px",
@@ -985,11 +1053,11 @@ export default function CustomerInvoicesPage() {
               </BlockCard>
 
               {/* Synced Summary UI with Admin */}
-              <BlockCard>
+              <BlockCard className="customer-invoice-summary-card">
                 <div style={{ overflowX: "auto" }}>
                   <article
                     style={{
-                      minWidth: "960px",
+                      minWidth: "100%",
                       background: "#F6F2E9",
                       border: "2px solid #8E1525",
                       padding: "6px",
@@ -1114,7 +1182,7 @@ export default function CustomerInvoicesPage() {
                           </p>
                         ) : (
                           <div style={{ overflowX: "auto" }}>
-                            <table style={{ width: "100%", minWidth: "1120px", borderCollapse: "collapse", fontSize: "0.92rem" }}>
+                            <table style={{ width: "100%", minWidth: "980px", borderCollapse: "collapse", fontSize: "0.92rem" }}>
                               <thead>
                                 <tr style={{ borderTop: "1px solid #232323", borderBottom: "1px solid #666666", textAlign: "left" }}>
                                   <th style={{ padding: "0.35rem 0.2rem", width: "6%" }}>Sr No.</th>
@@ -1202,7 +1270,7 @@ export default function CustomerInvoicesPage() {
               </BlockCard>
             </>
           ) : (
-            <div style={{ background: "white", border: "1px solid #E2E8F0", borderRadius: "16px", padding: "4rem 2rem", textAlign: "center", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", boxShadow: "0 4px 6px -1px rgba(0,0,0,0.03)" }}>
+            <div className="customer-invoice-empty-card" style={{ background: "white", border: "1px solid #E2E8F0", borderRadius: "16px", padding: "4rem 2rem", textAlign: "center", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", boxShadow: "0 4px 6px -1px rgba(0,0,0,0.03)" }}>
               <div style={{ background: "#F8FAFC", padding: "1.5rem", borderRadius: "50%", marginBottom: "1.5rem" }}>
                 <FileSearch size={48} color="#94A3B8" strokeWidth={1.5} />
               </div>
