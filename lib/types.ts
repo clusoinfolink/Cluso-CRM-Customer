@@ -125,6 +125,27 @@ export type InvoiceSnapshot = {
   companyName?: string;
 };
 
+export type ReverificationAppeal = {
+  status: "open" | "resolved";
+  submittedAt: string;
+  submittedBy?: string | null;
+  submittedByName?: string;
+  services?: Array<{
+    serviceId: string;
+    serviceName: string;
+  }>;
+  serviceId?: string;
+  serviceName?: string;
+  comment: string;
+  attachmentFileName?: string;
+  attachmentMimeType?: string;
+  attachmentFileSize?: number | null;
+  attachmentData?: string;
+  resolvedAt?: string | null;
+  resolvedBy?: string | null;
+  resolvedByName?: string;
+};
+
 export type InvoicePartyDetails = {
   companyName: string;
   loginEmail: string;
@@ -222,6 +243,7 @@ export type RequestItem = {
   serviceVerifications?: ServiceVerification[];
   reportMetadata?: ReportMetadata;
   reportData?: Record<string, unknown> | null;
+  reverificationAppeal?: ReverificationAppeal | null;
   invoiceSnapshot?: InvoiceSnapshot | null;
   candidateFormResponses?: CandidateServiceResponse[];
   customerRejectedFields?: RejectedCandidateField[];

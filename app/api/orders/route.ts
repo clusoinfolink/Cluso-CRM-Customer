@@ -45,7 +45,26 @@ const enterpriseDecisionSchema = z.object({
   rejectionNote: z.string().trim().max(500).optional().default(""),
 });
 
+const appealReverificationSchema = z.object({
+  action: z.literal("appeal-reverification"),
+  requestId: z.string().min(1),
+  serviceIds: z.array(z.string().min(1)).min(1),
+  comment: z.string().trim().min(3).max(2000),
+  attachmentFileName: z.string().trim().max(180).optional().default(""),
+  attachmentMimeType: z.string().trim().max(120).optional().default(""),
+  attachmentFileSize: z.number().int().nonnegative().nullable().optional().default(null),
+  attachmentData: z.string().trim().max(7_000_000).optional().default(""),
+});
+
 const ENTERPRISE_REJECTION_WINDOW_MS = 10 * 60 * 1000;
+const MAX_APPEAL_ATTACHMENT_BYTES = 5 * 1024 * 1024;
+const APPEAL_ATTACHMENT_MIME_TYPES = new Set([
+  "application/pdf",
+  "image/png",
+  "image/jpeg",
+  "image/jpg",
+  "image/webp",
+]);
 const DEFAULT_PERSONAL_DETAILS_SERVICE_NAME = "Personal details";
 const DEFAULT_PERSONAL_DETAILS_FORM_FIELDS = [
   {
@@ -133,6 +152,142 @@ function normalizeDateValue(value: unknown) {
   }
 
   return parsedDate;
+}
+
+function normalizeAttachmentFileName(input: string, fallback: string) {
+  const trimmed = input.trim();
+  const candidate = trimmed || fallback;
+  return (
+    candidate
+      .replace(/[\\/:*?"<>|]/g, "-")
+      .replace(/\s+/g, "-")
+      .replace(/-+/g, "-")
+      .replace(/^[-.]+|[-.]+$/g, "")
+      .slice(0, 180) || fallback
+  );
+}
+
+function getAttachmentExtensionFromMimeType(mimeType: string) {
+  if (mimeType === "application/pdf") {
+    return "pdf";
+  }
+
+  if (mimeType === "image/png") {
+    return "png";
+  }
+
+  if (mimeType === "image/webp") {
+    return "webp";
+  }
+
+  return "jpg";
+}
+
+function parseAppealAttachmentDataUrl(dataUrl: string) {
+  const trimmed = dataUrl.trim();
+  const match = trimmed.match(/^data:([^;,]+);base64,([A-Za-z0-9+/=\r\n]+)$/);
+  if (!match) {
+    return null;
+  }
+
+  const mimeType = match[1].trim().toLowerCase();
+  if (!APPEAL_ATTACHMENT_MIME_TYPES.has(mimeType)) {
+    return null;
+  }
+
+  const base64Payload = match[2].replace(/\s+/g, "");
+  if (!base64Payload) {
+    return null;
+  }
+
+  try {
+    const content = Buffer.from(base64Payload, "base64");
+    if (content.byteLength === 0) {
+      return null;
+    }
+
+    return {
+      mimeType,
+      content,
+      normalizedDataUrl: `data:${mimeType};base64,${base64Payload}`,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function normalizeAppealAttachment(payload: {
+  attachmentData?: string;
+  attachmentFileName?: string;
+  attachmentMimeType?: string;
+  attachmentFileSize?: number | null;
+}) {
+  const rawData = payload.attachmentData?.trim() ?? "";
+  const hasMetadata =
+    Boolean(payload.attachmentFileName?.trim()) ||
+    Boolean(payload.attachmentMimeType?.trim()) ||
+    Boolean(payload.attachmentFileSize);
+
+  if (!rawData) {
+    if (hasMetadata) {
+      return {
+        ok: false as const,
+        error: "Attachment metadata was provided without file data.",
+      };
+    }
+
+    return {
+      ok: true as const,
+      value: {
+        attachmentFileName: "",
+        attachmentMimeType: "",
+        attachmentFileSize: null,
+        attachmentData: "",
+      },
+    };
+  }
+
+  const parsed = parseAppealAttachmentDataUrl(rawData);
+  if (!parsed) {
+    return {
+      ok: false as const,
+      error: "Attachment must be a valid PDF, PNG, JPG, or WEBP file.",
+    };
+  }
+
+  if (parsed.content.byteLength > MAX_APPEAL_ATTACHMENT_BYTES) {
+    return {
+      ok: false as const,
+      error: "Attachment must be 5MB or smaller.",
+    };
+  }
+
+  if (
+    typeof payload.attachmentFileSize === "number" &&
+    payload.attachmentFileSize > MAX_APPEAL_ATTACHMENT_BYTES
+  ) {
+    return {
+      ok: false as const,
+      error: "Attachment must be 5MB or smaller.",
+    };
+  }
+
+  const extension = getAttachmentExtensionFromMimeType(parsed.mimeType);
+  const fallbackName = `appeal-attachment.${extension}`;
+  const normalizedFileName = normalizeAttachmentFileName(
+    payload.attachmentFileName ?? "",
+    fallbackName,
+  );
+
+  return {
+    ok: true as const,
+    value: {
+      attachmentFileName: normalizedFileName,
+      attachmentMimeType: parsed.mimeType,
+      attachmentFileSize: parsed.content.byteLength,
+      attachmentData: parsed.normalizedDataUrl,
+    },
+  };
 }
 
 function getEnterpriseDecisionWindowState(requestDoc: {
@@ -1028,6 +1183,7 @@ export async function GET(req: NextRequest) {
       customerRejectedFields: visibleCustomerRejectedFields,
       reportMetadata: isReportSharedWithCustomer ? item.reportMetadata ?? null : null,
       reportData: isReportSharedWithCustomer ? item.reportData ?? null : null,
+      reverificationAppeal: item.reverificationAppeal ?? null,
       invoiceSnapshot: visibleInvoiceSnapshot,
       createdByName: creatorMap.get(String(item.createdBy))?.name ?? "Unknown",
       createdByRole: creatorMap.get(String(item.createdBy))?.role ?? "unknown",
@@ -1206,6 +1362,127 @@ export async function PATCH(req: NextRequest) {
   const scopedFilter = await buildScopedRequestFilter(auth, companyId);
   if (!scopedFilter.ok) {
     return NextResponse.json({ error: scopedFilter.error }, { status: 403 });
+  }
+
+  const appealParsed = appealReverificationSchema.safeParse(body);
+  if (appealParsed.success) {
+    const requestFilter: Record<string, unknown> = {
+      ...scopedFilter.filter,
+      _id: appealParsed.data.requestId,
+    };
+
+    const requestDoc = await VerificationRequest.findOne(requestFilter)
+      .select("status reportMetadata selectedServices serviceVerifications reverificationAppeal")
+      .lean();
+
+    if (!requestDoc) {
+      return NextResponse.json({ error: "Request not found." }, { status: 404 });
+    }
+
+    if (requestDoc.status !== "verified") {
+      return NextResponse.json(
+        { error: "Only verified requests can be appealed for reverification." },
+        { status: 400 },
+      );
+    }
+
+    if (!requestDoc.reportMetadata?.customerSharedAt) {
+      return NextResponse.json(
+        { error: "Report must be shared to customer before creating an appeal." },
+        { status: 400 },
+      );
+    }
+
+    const existingAppealStatus =
+      (requestDoc.reverificationAppeal as { status?: string } | null)?.status ?? "";
+    if (existingAppealStatus === "open") {
+      return NextResponse.json(
+        { error: "An appeal is already pending for this request." },
+        { status: 400 },
+      );
+    }
+
+    const uniqueServiceIds = [...new Set(appealParsed.data.serviceIds.map((id) => id.trim()))].filter(
+      Boolean,
+    );
+    if (uniqueServiceIds.length === 0) {
+      return NextResponse.json(
+        { error: "Please select at least one service to appeal." },
+        { status: 400 },
+      );
+    }
+
+    const serviceMap = new Map<string, { serviceId: string; serviceName: string }>();
+    for (const service of requestDoc.serviceVerifications ?? []) {
+      const serviceId = String(service.serviceId);
+      if (!serviceMap.has(serviceId)) {
+        serviceMap.set(serviceId, {
+          serviceId,
+          serviceName: service.serviceName || "Service",
+        });
+      }
+    }
+
+    for (const service of requestDoc.selectedServices ?? []) {
+      const serviceId = String(service.serviceId);
+      if (!serviceMap.has(serviceId)) {
+        serviceMap.set(serviceId, {
+          serviceId,
+          serviceName: service.serviceName || "Service",
+        });
+      }
+    }
+
+    const selectedAppealServices = uniqueServiceIds
+      .map((serviceId) => serviceMap.get(serviceId))
+      .filter(
+        (
+          service,
+        ): service is {
+          serviceId: string;
+          serviceName: string;
+        } => Boolean(service),
+      );
+
+    if (selectedAppealServices.length !== uniqueServiceIds.length) {
+      return NextResponse.json(
+        { error: "One or more selected services are not part of this request." },
+        { status: 400 },
+      );
+    }
+
+    const primaryAppealService = selectedAppealServices[0];
+
+    const normalizedAttachment = normalizeAppealAttachment(appealParsed.data);
+    if (!normalizedAttachment.ok) {
+      return NextResponse.json({ error: normalizedAttachment.error }, { status: 400 });
+    }
+
+    const actor = await User.findById(auth.userId).select("name").lean();
+    await VerificationRequest.findByIdAndUpdate(appealParsed.data.requestId, {
+      reverificationAppeal: {
+        status: "open",
+        submittedAt: new Date(),
+        submittedBy: auth.userId,
+        submittedByName: actor?.name ?? "",
+        services: selectedAppealServices,
+        serviceId: primaryAppealService.serviceId,
+        serviceName: primaryAppealService.serviceName,
+        comment: appealParsed.data.comment.trim(),
+        attachmentFileName: normalizedAttachment.value.attachmentFileName,
+        attachmentMimeType: normalizedAttachment.value.attachmentMimeType,
+        attachmentFileSize: normalizedAttachment.value.attachmentFileSize,
+        attachmentData: normalizedAttachment.value.attachmentData,
+        resolvedAt: null,
+        resolvedBy: null,
+        resolvedByName: "",
+      },
+    });
+
+    return NextResponse.json({
+      message:
+        "Appeal submitted. Admin can now review your comments and attachment for reverification.",
+    });
   }
 
   const enterpriseDecisionParsed = enterpriseDecisionSchema.safeParse(body);
@@ -1546,6 +1823,7 @@ export async function PATCH(req: NextRequest) {
     rejectionNote: "",
     enterpriseApprovedAt: null,
     enterpriseDecisionLockedAt: null,
+    reverificationAppeal: null,
   });
 
   const portalUrl = resolveCandidatePortalUrl();

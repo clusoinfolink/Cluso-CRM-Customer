@@ -165,6 +165,84 @@ const VerificationRequestSchema = new Schema(
       type: Schema.Types.Mixed,
       default: null,
     },
+    reverificationAppeal: {
+      type: {
+        status: {
+          type: String,
+          enum: ["open", "resolved"],
+          required: true,
+        },
+        submittedAt: {
+          type: Date,
+          required: true,
+        },
+        submittedBy: {
+          type: Schema.Types.ObjectId,
+          ref: "User",
+          default: null,
+        },
+        submittedByName: {
+          type: String,
+          default: "",
+        },
+        services: [
+          {
+            serviceId: {
+              type: Schema.Types.ObjectId,
+              ref: "Service",
+              required: true,
+            },
+            serviceName: {
+              type: String,
+              required: true,
+            },
+          },
+        ],
+        serviceId: {
+          type: Schema.Types.ObjectId,
+          ref: "Service",
+          required: true,
+        },
+        serviceName: {
+          type: String,
+          required: true,
+        },
+        comment: {
+          type: String,
+          default: "",
+        },
+        attachmentFileName: {
+          type: String,
+          default: "",
+        },
+        attachmentMimeType: {
+          type: String,
+          default: "",
+        },
+        attachmentFileSize: {
+          type: Number,
+          default: null,
+        },
+        attachmentData: {
+          type: String,
+          default: "",
+        },
+        resolvedAt: {
+          type: Date,
+          default: null,
+        },
+        resolvedBy: {
+          type: Schema.Types.ObjectId,
+          ref: "User",
+          default: null,
+        },
+        resolvedByName: {
+          type: String,
+          default: "",
+        },
+      },
+      default: null,
+    },
     invoiceSnapshot: {
       type: Schema.Types.Mixed,
       default: null,
@@ -203,6 +281,9 @@ if (
     !models.VerificationRequest.schema.path("reportMetadata") ||
     !models.VerificationRequest.schema.path("reportMetadata.customerSharedAt") ||
     !models.VerificationRequest.schema.path("reportData") ||
+    !models.VerificationRequest.schema.path("reverificationAppeal") ||
+    !models.VerificationRequest.schema.path("reverificationAppeal.status") ||
+    !models.VerificationRequest.schema.path("reverificationAppeal.services") ||
     !models.VerificationRequest.schema.path("invoiceSnapshot") ||
     !models.VerificationRequest.schema.path("selectedServices.yearsOfChecking"))
 ) {

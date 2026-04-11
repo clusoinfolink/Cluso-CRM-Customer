@@ -1,6 +1,6 @@
 ﻿"use client";
 
-import { FormEvent, useEffect, useMemo, useState, Suspense } from "react";
+import { ChangeEvent, FormEvent, useEffect, useMemo, useState, Suspense } from "react";
 import Image from "next/image";
 import { useSearchParams } from "next/navigation";
 import { ListChecks, Search, X } from "lucide-react";
@@ -135,12 +135,63 @@ function getEnterpriseStatusLabel(status: RequestStatus) {
   return status;
 }
 
+function getEnterpriseStatusClassName(status: RequestStatus) {
+  if (status === "verified") {
+    return "bg-emerald-200 text-emerald-900 border border-emerald-400 animate-pulse";
+  }
+
+  if (status === "approved") {
+    return "bg-green-100 text-green-700 border border-green-200";
+  }
+
+  if (status === "rejected") {
+    return "bg-red-100 text-red-700 border border-red-200";
+  }
+
+  return "bg-yellow-100 text-yellow-700 border border-yellow-200";
+}
+
+function getRequestStatusDisplay(item: RequestItem) {
+  if (item.status === "verified" && item.reverificationAppeal?.status === "resolved") {
+    return {
+      label: "reverified",
+      className: "bg-sky-100 text-sky-800 border border-sky-300",
+    };
+  }
+
+  return {
+    label: getEnterpriseStatusLabel(item.status),
+    className: getEnterpriseStatusClassName(item.status),
+  };
+}
+
+function resolveReverificationDate(item: RequestItem) {
+  if (item.status !== "verified" || item.reverificationAppeal?.status !== "resolved") {
+    return null;
+  }
+
+  return (
+    item.reverificationAppeal.resolvedAt ||
+    item.reportMetadata?.customerSharedAt ||
+    item.reportMetadata?.generatedAt ||
+    null
+  );
+}
+
 const REPORT_NOTICE_PARAGRAPHS = [
   "The Cluso Report is provided by CLUSO INFOLINK, LLC. CLUSO INFOLINK, LLC does not warrant the completeness or correctness of this report or any of the information contained herein. CLUSO INFOLINK, LLC is not liable for any loss, damage or injury caused by negligence or other act or failure of CLUSO INFOLINK, LLC in procuring, collecting or communicating any such information. Reliance on any information contained herein shall be solely at the users risk and shall not constitute a waiver of any claim against, and a release of, CLUSO INFOLINK, LLC.",
   "This report is furnished in strict confidence for your exclusive use of legitimate business purposes and for no other purpose, and shall not be reproduced in whole or in part in any manner whatsoever. CLUSO INFOLINK is a private investigation company licensed by the Texas Private Security Bureau (TX License Number A16821). Contact the Texas PSB for regulatory information or complaints: TX Private Security, MSC 0241, PO Box 4087, Austin TX 78773-0001 Tel: 512-424-7298 Fax: 512-424-7728.",
 ] as const;
 
 const REQUESTS_PER_PAGE = 15;
+const MAX_APPEAL_ATTACHMENT_BYTES = 5 * 1024 * 1024;
+const APPEAL_ATTACHMENT_MIME_TYPES = new Set([
+  "application/pdf",
+  "image/png",
+  "image/jpeg",
+  "image/jpg",
+  "image/webp",
+]);
 
 type ReportPreviewAttempt = {
   attemptedAt: string;
@@ -443,6 +494,109 @@ function parseRepeatableAnswerValues(rawValue: string, repeatable?: boolean) {
   }
 }
 
+function formatFileSize(bytes: number) {
+  if (bytes < 1024) {
+    return `${bytes} B`;
+  }
+
+  const kb = bytes / 1024;
+  if (kb < 1024) {
+    return `${kb.toFixed(1)} KB`;
+  }
+
+  return `${(kb / 1024).toFixed(2)} MB`;
+}
+
+function readFileAsDataUrl(file: File) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("Could not read attachment file."));
+    reader.onload = () => {
+      if (typeof reader.result !== "string") {
+        reject(new Error("Could not read attachment file."));
+        return;
+      }
+
+      resolve(reader.result);
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+function buildAppealServiceOptions(item: RequestItem | null) {
+  if (!item) {
+    return [] as Array<{ serviceId: string; serviceName: string }>;
+  }
+
+  const optionsMap = new Map<string, { serviceId: string; serviceName: string }>();
+
+  for (const service of item.serviceVerifications ?? []) {
+    const serviceId = String(service.serviceId || "").trim();
+    if (!serviceId) {
+      continue;
+    }
+
+    optionsMap.set(serviceId, {
+      serviceId,
+      serviceName: service.serviceName || "Service",
+    });
+  }
+
+  for (const service of item.selectedServices ?? []) {
+    const serviceId = String(service.serviceId || "").trim();
+    if (!serviceId || optionsMap.has(serviceId)) {
+      continue;
+    }
+
+    optionsMap.set(serviceId, {
+      serviceId,
+      serviceName: service.serviceName || "Service",
+    });
+  }
+
+  return [...optionsMap.values()];
+}
+
+function resolveAppealServices(appeal: RequestItem["reverificationAppeal"] | null | undefined) {
+  if (!appeal) {
+    return [] as Array<{ serviceId: string; serviceName: string }>;
+  }
+
+  const fromList = (appeal.services ?? [])
+    .map((service) => ({
+      serviceId: String(service.serviceId || "").trim(),
+      serviceName: (service.serviceName || "Service").trim(),
+    }))
+    .filter((service) => Boolean(service.serviceId));
+
+  if (fromList.length > 0) {
+    return fromList;
+  }
+
+  const fallbackServiceId = String(appeal.serviceId || "").trim();
+  if (!fallbackServiceId) {
+    return [] as Array<{ serviceId: string; serviceName: string }>;
+  }
+
+  return [
+    {
+      serviceId: fallbackServiceId,
+      serviceName: (appeal.serviceName || "Service").trim() || "Service",
+    },
+  ];
+}
+
+function toAppealServiceLabel(appeal: RequestItem["reverificationAppeal"] | null | undefined) {
+  const names = resolveAppealServices(appeal)
+    .map((service) => service.serviceName)
+    .filter(Boolean);
+  if (names.length === 0) {
+    return "-";
+  }
+
+  return names.join(", ");
+}
+
 function RequestsPageContent() {
   const { me, loading, logout } = usePortalSession();
   const searchParams = useSearchParams();
@@ -458,6 +612,14 @@ function RequestsPageContent() {
   const [activeResponseRequestId, setActiveResponseRequestId] = useState("");
   const [activeReportRequestId, setActiveReportRequestId] = useState("");
   const [downloadingReportRequestId, setDownloadingReportRequestId] = useState("");
+  const [isAppealFormOpen, setIsAppealFormOpen] = useState(false);
+  const [appealSelectedServiceIds, setAppealSelectedServiceIds] = useState<string[]>([]);
+  const [appealComment, setAppealComment] = useState("");
+  const [appealAttachmentFileName, setAppealAttachmentFileName] = useState("");
+  const [appealAttachmentMimeType, setAppealAttachmentMimeType] = useState("");
+  const [appealAttachmentFileSize, setAppealAttachmentFileSize] = useState<number | null>(null);
+  const [appealAttachmentData, setAppealAttachmentData] = useState("");
+  const [submittingAppealRequestId, setSubmittingAppealRequestId] = useState("");
   const [isRejectSelectorOpen, setIsRejectSelectorOpen] = useState(false);
   const [selectedRejectedFieldKeys, setSelectedRejectedFieldKeys] = useState<string[]>([]);
   const [rejectionComment, setRejectionComment] = useState("");
@@ -624,6 +786,13 @@ function RequestsPageContent() {
     [activeReportRequestId, items],
   );
 
+  const activeReportAppealServiceOptions = useMemo(
+    () => buildAppealServiceOptions(activeReportRequest),
+    [activeReportRequest],
+  );
+
+  const activeReportAppeal = activeReportRequest?.reverificationAppeal ?? null;
+
   useEffect(() => {
     const timer = window.setInterval(() => {
       setNowMs(Date.now());
@@ -649,6 +818,130 @@ function RequestsPageContent() {
     setRejectionComment("");
   }
 
+  function clearAppealAttachment() {
+    setAppealAttachmentFileName("");
+    setAppealAttachmentMimeType("");
+    setAppealAttachmentFileSize(null);
+    setAppealAttachmentData("");
+  }
+
+  function resetAppealComposer() {
+    setIsAppealFormOpen(false);
+    setAppealSelectedServiceIds([]);
+    setAppealComment("");
+    clearAppealAttachment();
+  }
+
+  function openAppealComposer(item: RequestItem) {
+    const options = buildAppealServiceOptions(item);
+    setAppealSelectedServiceIds(options.length > 0 ? [options[0].serviceId] : []);
+    setAppealComment("");
+    clearAppealAttachment();
+    setIsAppealFormOpen(true);
+  }
+
+  function toggleAppealServiceSelection(serviceId: string, checked: boolean) {
+    setAppealSelectedServiceIds((prev) => {
+      if (checked) {
+        if (prev.includes(serviceId)) {
+          return prev;
+        }
+
+        return [...prev, serviceId];
+      }
+
+      return prev.filter((id) => id !== serviceId);
+    });
+  }
+
+  async function selectAppealAttachment(event: ChangeEvent<HTMLInputElement>) {
+    const input = event.currentTarget;
+    const selectedFile = input.files?.[0];
+
+    if (!selectedFile) {
+      clearAppealAttachment();
+      return;
+    }
+
+    const normalizedMimeType = selectedFile.type.trim().toLowerCase();
+    if (!APPEAL_ATTACHMENT_MIME_TYPES.has(normalizedMimeType)) {
+      setMessage("Attachment must be PDF, PNG, JPG, or WEBP.");
+      input.value = "";
+      return;
+    }
+
+    if (selectedFile.size > MAX_APPEAL_ATTACHMENT_BYTES) {
+      setMessage("Attachment must be 5MB or smaller.");
+      input.value = "";
+      return;
+    }
+
+    try {
+      const attachmentData = await readFileAsDataUrl(selectedFile);
+      setAppealAttachmentFileName(selectedFile.name);
+      setAppealAttachmentMimeType(normalizedMimeType);
+      setAppealAttachmentFileSize(selectedFile.size);
+      setAppealAttachmentData(attachmentData);
+      setMessage(`Attachment selected: ${selectedFile.name} (${formatFileSize(selectedFile.size)}).`);
+      input.value = "";
+    } catch {
+      setMessage("Could not read attachment file. Please try another file.");
+      input.value = "";
+    }
+  }
+
+  async function submitReverificationAppeal() {
+    if (!activeReportRequest) {
+      return;
+    }
+
+    if (activeReportRequest.reverificationAppeal?.status === "open") {
+      setMessage("An appeal is already pending for this request.");
+      return;
+    }
+
+    const trimmedComment = appealComment.trim();
+    if (appealSelectedServiceIds.length === 0) {
+      setMessage("Please select at least one service to appeal.");
+      return;
+    }
+
+    if (trimmedComment.length < 3) {
+      setMessage("Please enter at least 3 characters in the appeal comment.");
+      return;
+    }
+
+    setMessage("");
+    setSubmittingAppealRequestId(activeReportRequest._id);
+
+    const response = await fetch("/api/orders", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "appeal-reverification",
+        requestId: activeReportRequest._id,
+        serviceIds: appealSelectedServiceIds,
+        comment: trimmedComment,
+        attachmentFileName: appealAttachmentFileName,
+        attachmentMimeType: appealAttachmentMimeType,
+        attachmentFileSize: appealAttachmentFileSize,
+        attachmentData: appealAttachmentData,
+      }),
+    });
+
+    const data = (await response.json()) as { message?: string; error?: string };
+    setSubmittingAppealRequestId("");
+
+    if (!response.ok) {
+      setMessage(data.error ?? "Could not submit reverification appeal.");
+      return;
+    }
+
+    setMessage(data.message ?? "Appeal submitted for reverification.");
+    resetAppealComposer();
+    await refreshRequests();
+  }
+
   function openSharedReport(item: RequestItem) {
     const canViewSharedReport =
       item.status === "verified" &&
@@ -661,10 +954,12 @@ function RequestsPageContent() {
     }
 
     setActiveResponseRequestId("");
+    resetAppealComposer();
     setActiveReportRequestId(item._id);
   }
 
   function closeSharedReportModal() {
+    resetAppealComposer();
     setActiveReportRequestId("");
   }
 
@@ -1557,6 +1852,9 @@ function RequestsPageContent() {
                   const formSubmitted = item.candidateFormStatus === "submitted";
                   const isActionRowActive = selectedActionRowId === item._id;
                   const decisionWindow = getEnterpriseDecisionWindow(item, nowMs);
+                  const appealServiceLabel = toAppealServiceLabel(item.reverificationAppeal);
+                  const statusDisplay = getRequestStatusDisplay(item);
+                  const reverificationDate = resolveReverificationDate(item);
                   const canViewSharedReport =
                     item.status === "verified" &&
                     Boolean(item.reportData) &&
@@ -1597,13 +1895,8 @@ function RequestsPageContent() {
                       </td>
                       <td className="px-3 sm:px-4 lg:px-5 py-4">
                         <div>
-                          <span className={`inline-flex px-2.5 py-1 rounded-full text-xs font-bold capitalize ${
-                            item.status === 'verified' ? 'bg-emerald-200 text-emerald-900 border border-emerald-400 animate-pulse' :
-                            item.status === 'approved' ? 'bg-green-100 text-green-700 border border-green-200' :
-                            item.status === 'rejected' ? 'bg-red-100 text-red-700 border border-red-200' :
-                            'bg-yellow-100 text-yellow-700 border border-yellow-200'
-                          }`}>
-                            {getEnterpriseStatusLabel(item.status)}
+                          <span className={`inline-flex px-2.5 py-1 rounded-full text-xs font-bold capitalize ${statusDisplay.className}`}>
+                            {statusDisplay.label}
                           </span>
                         </div>
                         <div className="mt-1.5 flex items-center gap-1.5 text-xs font-medium">
@@ -1618,6 +1911,12 @@ function RequestsPageContent() {
                              {item.rejectionNote}
                           </div>
                         )}
+                        {item.reverificationAppeal?.status === "open" ? (
+                          <div className="mt-2 text-xs text-red-700 font-semibold max-w-[200px] whitespace-normal">
+                            <strong className="block">Appeal Pending:</strong>
+                            {appealServiceLabel}
+                          </div>
+                        ) : null}
                         {item.status === "approved" && (
                           <div className="mt-2 text-xs font-semibold text-slate-600">
                             {decisionWindow.isLocked
@@ -1635,6 +1934,12 @@ function RequestsPageContent() {
                           <span className="font-semibold text-slate-700">Submitted: </span> 
                           {item.candidateSubmittedAt ? new Date(item.candidateSubmittedAt).toLocaleDateString() : "-"}
                         </div>
+                        {reverificationDate ? (
+                          <div className="text-xs text-slate-500 mt-1">
+                            <span className="font-semibold text-slate-700">Reverified: </span>
+                            {formatReportDateTime(reverificationDate)}
+                          </div>
+                        ) : null}
                       </td>
                       <td className="px-3 sm:px-4 lg:px-5 py-4">
                         <div className="text-xs">
@@ -2044,6 +2349,30 @@ function RequestsPageContent() {
               <div style={{ display: "inline-flex", alignItems: "center", gap: "0.55rem", flexWrap: "wrap", justifyContent: "flex-end" }}>
                 <button
                   type="button"
+                  className="btn btn-secondary"
+                  onClick={() => {
+                    if (isAppealFormOpen) {
+                      setIsAppealFormOpen(false);
+                      return;
+                    }
+
+                    openAppealComposer(activeReportRequest);
+                  }}
+                  disabled={Boolean(
+                    activeReportAppeal?.status === "open" ||
+                      submittingAppealRequestId === activeReportRequest._id,
+                  )}
+                  style={{ padding: "0.42rem 0.75rem", fontSize: "0.84rem" }}
+                >
+                  {activeReportAppeal?.status === "open"
+                    ? "Appeal Submitted"
+                    : isAppealFormOpen
+                      ? "Hide Appeal Form"
+                      : "Appeal Reverification"}
+                </button>
+
+                <button
+                  type="button"
                   className="btn btn-primary"
                   onClick={() => downloadSharedReport(activeReportRequest)}
                   disabled={downloadingReportRequestId === activeReportRequest._id}
@@ -2064,6 +2393,188 @@ function RequestsPageContent() {
                 </button>
               </div>
             </div>
+
+            {activeReportAppeal?.status === "open" ? (
+              <section
+                style={{
+                  border: "1px solid #FCA5A5",
+                  background: "#FEF2F2",
+                  borderRadius: "10px",
+                  padding: "0.85rem",
+                  marginBottom: "0.9rem",
+                  display: "grid",
+                  gap: "0.45rem",
+                }}
+              >
+                <strong style={{ color: "#B91C1C" }}>Appeal Pending Reverification</strong>
+                <div style={{ color: "#7F1D1D", fontSize: "0.85rem" }}>
+                  <strong>Services:</strong> {toAppealServiceLabel(activeReportAppeal)}
+                </div>
+                <div style={{ color: "#7F1D1D", fontSize: "0.85rem" }}>
+                  <strong>Submitted:</strong> {formatReportDateTime(activeReportAppeal.submittedAt)}
+                </div>
+                <div style={{ color: "#7F1D1D", fontSize: "0.85rem", whiteSpace: "pre-wrap" }}>
+                  <strong>Comment:</strong> {activeReportAppeal.comment || "-"}
+                </div>
+                {activeReportAppeal.attachmentData ? (
+                  <div style={{ display: "inline-flex", alignItems: "center", gap: "0.65rem", flexWrap: "wrap" }}>
+                    <strong style={{ color: "#7F1D1D", fontSize: "0.85rem" }}>Attachment:</strong>
+                    <a
+                      href={activeReportAppeal.attachmentData}
+                      target="_blank"
+                      rel="noreferrer"
+                      style={{ color: "#B91C1C", fontWeight: 700, fontSize: "0.84rem", textDecoration: "none" }}
+                    >
+                      View
+                    </a>
+                    <a
+                      href={activeReportAppeal.attachmentData}
+                      download={activeReportAppeal.attachmentFileName || "appeal-attachment"}
+                      style={{ color: "#B91C1C", fontWeight: 700, fontSize: "0.84rem", textDecoration: "none" }}
+                    >
+                      Download
+                    </a>
+                  </div>
+                ) : null}
+              </section>
+            ) : null}
+
+            {isAppealFormOpen && activeReportAppeal?.status !== "open" ? (
+              <section
+                style={{
+                  border: "1px solid #FECACA",
+                  background: "#FFF7ED",
+                  borderRadius: "10px",
+                  padding: "0.85rem",
+                  marginBottom: "0.9rem",
+                  display: "grid",
+                  gap: "0.75rem",
+                }}
+              >
+                <strong style={{ color: "#9A3412" }}>Appeal For Reverification</strong>
+
+                <div style={{ display: "grid", gap: "0.35rem" }}>
+                  <label style={{ fontSize: "0.82rem", color: "#7C2D12", fontWeight: 600 }}>
+                    Services to appeal
+                  </label>
+                  {activeReportAppealServiceOptions.length === 0 ? (
+                    <div className="input" style={{ background: "#F8FAFC", color: "#94A3B8" }}>
+                      No services available
+                    </div>
+                  ) : (
+                    <div
+                      style={{
+                        display: "grid",
+                        gap: "0.35rem",
+                        border: "1px solid #E2E8F0",
+                        borderRadius: "8px",
+                        background: "#FFFFFF",
+                        padding: "0.6rem",
+                        maxHeight: "180px",
+                        overflowY: "auto",
+                      }}
+                    >
+                      {activeReportAppealServiceOptions.map((service) => {
+                        const checked = appealSelectedServiceIds.includes(service.serviceId);
+                        return (
+                          <label
+                            key={`appeal-service-${service.serviceId}`}
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: "0.45rem",
+                              color: "#374151",
+                              fontSize: "0.86rem",
+                            }}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={(event) =>
+                                toggleAppealServiceSelection(service.serviceId, event.target.checked)
+                              }
+                            />
+                            <span>{service.serviceName}</span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  )}
+                  <span style={{ color: "#7C2D12", fontSize: "0.78rem" }}>
+                    Selected: {appealSelectedServiceIds.length}
+                  </span>
+                </div>
+
+                <div style={{ display: "grid", gap: "0.35rem" }}>
+                  <label style={{ fontSize: "0.82rem", color: "#7C2D12", fontWeight: 600 }}>
+                    Comment
+                  </label>
+                  <textarea
+                    className="input"
+                    rows={3}
+                    placeholder="Explain what should be reverified"
+                    value={appealComment}
+                    onChange={(event) => setAppealComment(event.target.value)}
+                    style={{ background: "#FFFFFF" }}
+                  />
+                </div>
+
+                <div style={{ display: "grid", gap: "0.35rem" }}>
+                  <label style={{ fontSize: "0.82rem", color: "#7C2D12", fontWeight: 600 }}>
+                    Add attachment (PDF or image)
+                  </label>
+                  <input
+                    type="file"
+                    className="input"
+                    accept="application/pdf,image/png,image/jpeg,image/jpg,image/webp"
+                    onChange={(event) => void selectAppealAttachment(event)}
+                    style={{ background: "#FFFFFF" }}
+                  />
+                  {appealAttachmentData ? (
+                    <div style={{ display: "inline-flex", alignItems: "center", gap: "0.45rem", flexWrap: "wrap", fontSize: "0.79rem", color: "#7C2D12" }}>
+                      <span style={{ fontWeight: 700 }}>{appealAttachmentFileName || "Attachment selected"}</span>
+                      {typeof appealAttachmentFileSize === "number" ? (
+                        <span>({formatFileSize(appealAttachmentFileSize)})</span>
+                      ) : null}
+                      <button
+                        type="button"
+                        className="btn btn-secondary"
+                        style={{ padding: "0.2rem 0.5rem", fontSize: "0.72rem" }}
+                        onClick={clearAppealAttachment}
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
+
+                <div style={{ display: "flex", gap: "0.55rem", flexWrap: "wrap" }}>
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    onClick={() => void submitReverificationAppeal()}
+                    disabled={
+                      submittingAppealRequestId === activeReportRequest._id ||
+                      activeReportAppealServiceOptions.length === 0
+                    }
+                    style={{ padding: "0.42rem 0.75rem", fontSize: "0.84rem" }}
+                  >
+                    {submittingAppealRequestId === activeReportRequest._id
+                      ? "Submitting..."
+                      : "Submit Appeal"}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    onClick={() => setIsAppealFormOpen(false)}
+                    disabled={submittingAppealRequestId === activeReportRequest._id}
+                    style={{ padding: "0.42rem 0.75rem", fontSize: "0.84rem" }}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </section>
+            ) : null}
 
             {renderSharedReportPreview(activeReportRequest)}
           </div>
