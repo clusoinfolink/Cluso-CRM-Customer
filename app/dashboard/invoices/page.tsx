@@ -28,6 +28,8 @@ type MonthSummaryRow = {
   requestId: string;
   requestedAt: string;
   candidateName: string;
+  userName: string;
+  verifierName: string;
   requestStatus: string;
   serviceName: string;
   currency: string;
@@ -45,6 +47,50 @@ function clampGstRate(value: number) {
 
 function roundMoney(value: number) {
   return Math.round(value * 100) / 100;
+}
+
+function normalizeServiceUsageCount(value: unknown) {
+  const usageCount = Number(value);
+  if (!Number.isFinite(usageCount) || usageCount <= 0) {
+    return 1;
+  }
+
+  return Math.max(1, Math.floor(usageCount));
+}
+
+function resolveRequestVerifierName(request: {
+  serviceVerifications?: Array<{
+    attempts?: Array<{
+      verifierName?: string;
+      managerName?: string;
+      attemptedAt?: string;
+    }>;
+  }>;
+}) {
+  let latestVerifierName = "";
+  let latestAttemptedAt = -1;
+
+  for (const verification of request.serviceVerifications ?? []) {
+    for (const attempt of verification.attempts ?? []) {
+      const resolvedVerifierName =
+        (attempt.verifierName || "").trim() || (attempt.managerName || "").trim();
+      if (!resolvedVerifierName) {
+        continue;
+      }
+
+      const attemptedAt = new Date(attempt.attemptedAt || "");
+      const attemptedAtMs = Number.isNaN(attemptedAt.getTime())
+        ? -1
+        : attemptedAt.getTime();
+
+      if (attemptedAtMs >= latestAttemptedAt) {
+        latestAttemptedAt = attemptedAtMs;
+        latestVerifierName = resolvedVerifierName;
+      }
+    }
+  }
+
+  return latestVerifierName || "-";
 }
 
 function buildInvoiceTotalsWithGst(invoice: InvoiceRecord): InvoiceTotalWithGst[] {
@@ -216,7 +262,9 @@ function TimelineChart({ points }: { points: TimelinePoint[] }) {
 
 export default function CustomerInvoicesPage() {
   const { me, loading, logout } = usePortalSession();
-  const { items: requestItems } = useRequestsData();
+  const { items: requestItems } = useRequestsData({
+    enabled: Boolean(me) && me?.companyAccessStatus !== "inactive",
+  });
   const [message, setMessage] = useState("");
   const [invoices, setInvoices] = useState<InvoiceRecord[]>([]);
   const [selectedBillingMonth, setSelectedBillingMonth] = useState("");
@@ -447,6 +495,30 @@ export default function CustomerInvoicesPage() {
     const rows: MonthSummaryRow[] = [];
 
     monthRequests.forEach(({ request, requestDate }) => {
+      const verifierName = resolveRequestVerifierName(request);
+      const userName =
+        (request.delegateName || "").trim() ||
+        (request.createdByName || "").trim() ||
+        "-";
+      const serviceQuantityById = new Map<string, number>();
+      const serviceQuantityByName = new Map<string, number>();
+
+      (request.candidateFormResponses ?? []).forEach((serviceResponse) => {
+        const serviceId = (serviceResponse.serviceId || "").trim();
+        const serviceNameKey = (serviceResponse.serviceName || "").trim().toLowerCase();
+        const usageCount = normalizeServiceUsageCount(serviceResponse.serviceEntryCount);
+
+        if (serviceId) {
+          const existing = serviceQuantityById.get(serviceId) ?? 0;
+          serviceQuantityById.set(serviceId, Math.max(existing, usageCount));
+        }
+
+        if (serviceNameKey) {
+          const existing = serviceQuantityByName.get(serviceNameKey) ?? 0;
+          serviceQuantityByName.set(serviceNameKey, Math.max(existing, usageCount));
+        }
+      });
+
       const selectedServices =
         request.selectedServices?.map((service) => ({
           serviceId: service.serviceId || "",
@@ -468,34 +540,89 @@ export default function CustomerInvoicesPage() {
         ? services
         : [{ serviceId: "", serviceName: "Service Not Available", currency: request.invoiceSnapshot?.currency || "INR", price: 0 }];
 
-      normalizedServices.forEach((service) => {
+      const requestServicesByCurrency = new Map<
+        string,
+        Map<string, { serviceName: string; usageCount: number; subtotal: number }>
+      >();
+
+      normalizedServices.forEach((service, serviceIndex) => {
         const normalizedServiceId = (service.serviceId || "").trim();
         const normalizedServiceName = (service.serviceName || "").trim().toLowerCase();
         const matchedInvoiceRate =
           (normalizedServiceId ? invoiceRatesByServiceId.get(normalizedServiceId) : undefined) ??
           invoiceRatesByServiceName.get(normalizedServiceName);
+        const usageCount = normalizeServiceUsageCount(
+          (normalizedServiceId ? serviceQuantityById.get(normalizedServiceId) : undefined) ??
+            serviceQuantityByName.get(normalizedServiceName) ??
+            1,
+        );
 
         const resolvedCurrency = (matchedInvoiceRate?.currency || service.currency || "INR").toUpperCase();
-        const priceWithoutGst = roundMoney(Number(matchedInvoiceRate?.price ?? service.price) || 0);
-        const gstAmount = selectedInvoice.gstEnabled
-          ? roundMoney((priceWithoutGst * gstRate) / 100)
-          : 0;
+        const unitPrice = roundMoney(Number(matchedInvoiceRate?.price ?? service.price) || 0);
+        const serviceSubtotal = roundMoney(unitPrice * usageCount);
+        const resolvedServiceName =
+          matchedInvoiceRate?.serviceName || service.serviceName || "Service Not Available";
+        const serviceKey =
+          normalizedServiceId ||
+          normalizedServiceName ||
+          `${resolvedServiceName.toLowerCase()}-${serviceIndex}`;
 
-        rows.push({
-          srNo: rows.length + 1,
-          requestId: request._id,
-          requestedAt: Number.isNaN(requestDate.getTime())
-            ? ""
-            : requestDate.toISOString(),
-          candidateName: request.candidateName || "-",
-          requestStatus: request.status || "pending",
-          serviceName: matchedInvoiceRate?.serviceName || service.serviceName || "Service Not Available",
-          currency: resolvedCurrency,
-          priceWithoutGst,
-          gstAmount,
-          priceWithGst: roundMoney(priceWithoutGst + gstAmount),
-        });
+        let currencyServices = requestServicesByCurrency.get(resolvedCurrency);
+        if (!currencyServices) {
+          currencyServices = new Map();
+          requestServicesByCurrency.set(resolvedCurrency, currencyServices);
+        }
+
+        const existingService = currencyServices.get(serviceKey);
+        if (existingService) {
+          existingService.usageCount += usageCount;
+          existingService.subtotal = roundMoney(existingService.subtotal + serviceSubtotal);
+        } else {
+          currencyServices.set(serviceKey, {
+            serviceName: resolvedServiceName,
+            usageCount,
+            subtotal: serviceSubtotal,
+          });
+        }
       });
+
+      [...requestServicesByCurrency.entries()]
+        .sort(([firstCurrency], [secondCurrency]) =>
+          firstCurrency.localeCompare(secondCurrency),
+        )
+        .forEach(([currency, serviceEntries]) => {
+          const services = [...serviceEntries.values()];
+          const serviceName = services
+            .map((entry) =>
+              entry.usageCount > 1
+                ? `${entry.serviceName} x${entry.usageCount}`
+                : entry.serviceName,
+            )
+            .join(", ");
+          const priceWithoutGst = roundMoney(
+            services.reduce((sum, entry) => sum + entry.subtotal, 0),
+          );
+          const gstAmount = selectedInvoice.gstEnabled
+            ? roundMoney((priceWithoutGst * gstRate) / 100)
+            : 0;
+
+          rows.push({
+            srNo: rows.length + 1,
+            requestId: request._id,
+            requestedAt: Number.isNaN(requestDate.getTime())
+              ? ""
+              : requestDate.toISOString(),
+            candidateName: request.candidateName || "-",
+            userName,
+            verifierName,
+            requestStatus: request.status || "pending",
+            serviceName,
+            currency,
+            priceWithoutGst,
+            gstAmount,
+            priceWithGst: roundMoney(priceWithoutGst + gstAmount),
+          });
+        });
     });
 
     return rows;
@@ -937,6 +1064,8 @@ export default function CustomerInvoicesPage() {
                         <strong>CIN / Registration:</strong>{" "}
                         {selectedInvoice.clusoDetails.cinRegistrationNumber || "-"}
                       </div>
+                      <div><strong>SAC Code:</strong> {selectedInvoice.clusoDetails.sacCode || "-"}</div>
+                      <div><strong>LTU Code:</strong> {selectedInvoice.clusoDetails.ltuCode || "-"}</div>
                       <div><strong>Address:</strong> {selectedInvoice.clusoDetails.address || "-"}</div>
                       <div><strong>Invoice Email:</strong> {selectedInvoice.clusoDetails.invoiceEmail || "-"}</div>
                       <div>
@@ -1161,6 +1290,8 @@ export default function CustomerInvoicesPage() {
                           <div><strong>Login Email:</strong> {selectedInvoice.clusoDetails.loginEmail || "-"}</div>
                           <div><strong>GSTIN:</strong> {selectedInvoice.clusoDetails.gstin || "-"}</div>
                           <div><strong>CIN / Registration:</strong> {selectedInvoice.clusoDetails.cinRegistrationNumber || "-"}</div>
+                          <div><strong>SAC Code:</strong> {selectedInvoice.clusoDetails.sacCode || "-"}</div>
+                          <div><strong>LTU Code:</strong> {selectedInvoice.clusoDetails.ltuCode || "-"}</div>
                           <div><strong>Address:</strong> {selectedInvoice.clusoDetails.address || "-"}</div>
                           <div><strong>Invoice Email:</strong> {selectedInvoice.clusoDetails.invoiceEmail || "-"}</div>
                           <div>
@@ -1182,14 +1313,16 @@ export default function CustomerInvoicesPage() {
                           </p>
                         ) : (
                           <div style={{ overflowX: "auto" }}>
-                            <table style={{ width: "100%", minWidth: "980px", borderCollapse: "collapse", fontSize: "0.92rem" }}>
+                            <table style={{ width: "100%", minWidth: "1200px", borderCollapse: "collapse", fontSize: "0.92rem" }}>
                               <thead>
                                 <tr style={{ borderTop: "1px solid #232323", borderBottom: "1px solid #666666", textAlign: "left" }}>
                                   <th style={{ padding: "0.35rem 0.2rem", width: "6%" }}>Sr No.</th>
                                   <th style={{ padding: "0.35rem 0.2rem", width: "14%" }}>Requested Date</th>
-                                  <th style={{ padding: "0.35rem 0.2rem", width: "16%" }}>Name of Candidate</th>
+                                  <th style={{ padding: "0.35rem 0.2rem", width: "14%" }}>Name of Candidate</th>
+                                  <th style={{ padding: "0.35rem 0.2rem", width: "14%" }}>User Name</th>
+                                  <th style={{ padding: "0.35rem 0.2rem", width: "12%" }}>Verifier Name</th>
                                   <th style={{ padding: "0.35rem 0.2rem", width: "10%" }}>Status</th>
-                                  <th style={{ padding: "0.35rem 0.2rem", width: "22%" }}>Service</th>
+                                  <th style={{ padding: "0.35rem 0.2rem", width: "16%" }}>Service</th>
                                   <th style={{ padding: "0.35rem 0.2rem", width: "8%" }}>Currency</th>
                                   <th style={{ padding: "0.35rem 0.2rem", width: "9%" }}>Price (Excl. GST)</th>
                                   <th style={{ padding: "0.35rem 0.2rem", width: "7%" }}>
@@ -1206,6 +1339,8 @@ export default function CustomerInvoicesPage() {
                                     <td style={{ padding: "0.35rem 0.2rem" }}>{row.srNo}</td>
                                     <td style={{ padding: "0.35rem 0.2rem" }}>{formatSummaryDate(row.requestedAt)}</td>
                                     <td style={{ padding: "0.35rem 0.2rem" }}>{row.candidateName}</td>
+                                    <td style={{ padding: "0.35rem 0.2rem" }}>{row.userName || "-"}</td>
+                                    <td style={{ padding: "0.35rem 0.2rem" }}>{row.verifierName || "-"}</td>
                                     <td style={{ padding: "0.35rem 0.2rem", textTransform: "capitalize" }}>{row.requestStatus}</td>
                                     <td style={{ padding: "0.35rem 0.2rem" }}>{row.serviceName}</td>
                                     <td style={{ padding: "0.35rem 0.2rem" }}>{row.currency}</td>

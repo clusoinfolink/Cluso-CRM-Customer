@@ -6,6 +6,8 @@ export type InvoicePdfPartyDetails = {
   loginEmail?: string;
   gstin?: string;
   cinRegistrationNumber?: string;
+  sacCode?: string;
+  ltuCode?: string;
   address?: string;
   invoiceEmail?: string;
   billingSameAsCompany?: boolean;
@@ -431,7 +433,10 @@ export async function buildInvoicePdf(payload: InvoicePdfPayload): Promise<Buffe
   const sectionPaddingX = 10;
   const sectionPaddingY = 10;
 
-  const buildPartyRows = (details: InvoicePdfPartyDetails) => {
+  const buildPartyRows = (
+    details: InvoicePdfPartyDetails,
+    includeClusoTaxCodes = false,
+  ) => {
     const rows = [
       { label: "Company Name", value: details.companyName || "-" },
       { label: "Login Email", value: details.loginEmail || "-" },
@@ -446,6 +451,13 @@ export async function buildInvoicePdf(payload: InvoicePdfPayload): Promise<Buffe
       { label: "Billing Address", value: details.billingAddress || "-" },
     ];
 
+    if (includeClusoTaxCodes) {
+      rows.splice(4, 0,
+        { label: "SAC Code", value: details.sacCode || "-" },
+        { label: "LTU Code", value: details.ltuCode || "-" },
+      );
+    }
+
     return rows.map((row) => ({
       ...row,
       lines: wrapPdfText(
@@ -458,7 +470,7 @@ export async function buildInvoicePdf(payload: InvoicePdfPayload): Promise<Buffe
   };
 
   const leftRows = buildPartyRows(payload.enterpriseDetails);
-  const rightRows = buildPartyRows(payload.clusoDetails);
+  const rightRows = buildPartyRows(payload.clusoDetails, true);
 
   const estimateRowsHeight = (rows: Array<{ lines: string[] }>) => {
     return rows.reduce((total, row) => total + row.lines.length * detailsLineHeight + 3, 0);

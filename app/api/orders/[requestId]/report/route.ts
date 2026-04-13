@@ -41,6 +41,9 @@ type ReportPayload = {
   }>;
 };
 
+const COMPANY_ACCESS_INACTIVE_ERROR =
+  "Your company access is deactivated. Only Settings and Invoices are available.";
+
 function asDate(value: unknown) {
   if (!value) {
     return null;
@@ -1113,6 +1116,10 @@ export async function GET(
     const auth = await getCustomerAuthFromRequest(req);
     if (!auth) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    if (auth.companyAccessStatus === "inactive") {
+      return NextResponse.json({ error: COMPANY_ACCESS_INACTIVE_ERROR }, { status: 403 });
     }
 
     const { requestId } = await context.params;

@@ -21,6 +21,10 @@ export async function GET() {
 
   const companyId = auth.role === "customer" ? auth.userId : auth.parentCustomerId;
   const companyUser = companyId ? await User.findById(companyId).lean() : null;
+  const companyAccessStatus =
+    companyUser?.companyAccessStatus === "inactive" || auth.companyAccessStatus === "inactive"
+      ? "inactive"
+      : "active";
   const selectedServices = (companyUser?.selectedServices ?? []).map((item) => ({
     serviceId: String(item.serviceId),
     serviceName: item.serviceName,
@@ -125,6 +129,7 @@ export async function GET() {
       email: user.email,
       role: user.role,
       companyId,
+      companyAccessStatus,
       availableServices,
     },
   });

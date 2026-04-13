@@ -44,6 +44,8 @@ const navItems: IconNavItem[] = [
   { href: "/dashboard/settings", label: "Settings", icon: Settings },
 ];
 
+const INACTIVE_ALLOWED_NAV_PATHS = ["/dashboard/invoices", "/dashboard/settings"];
+
 const REQUESTS_QUERY_KEY = ["customer-requests"];
 const REQUESTS_STALE_TIME_MS = 5 * 60 * 1000;
 
@@ -136,20 +138,45 @@ function isNavActive(pathname: string, href: string) {
   return pathname.startsWith(href);
 }
 
+function isPathAllowedForInactiveCompany(pathname: string) {
+  return INACTIVE_ALLOWED_NAV_PATHS.some(
+    (allowedPath) => pathname === allowedPath || pathname.startsWith(`${allowedPath}/`),
+  );
+}
+
 export function PortalFrame({ me, onLogout, title, subtitle, children }: PortalFrameProps) {
   const pathname = usePathname();
   const router = useRouter();
-  const visibleNav = navItems;
+  const isCompanyInactive = me.companyAccessStatus === "inactive";
+  const visibleNav = useMemo(
+    () =>
+      isCompanyInactive
+        ? navItems.filter((item) => INACTIVE_ALLOWED_NAV_PATHS.includes(item.href))
+        : navItems,
+    [isCompanyInactive],
+  );
   const notificationWrapRef = useRef<HTMLDivElement | null>(null);
   const [isNotificationOpen, setIsNotificationOpen] = useState(false);
   const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
   const [clearedNotificationIds, setClearedNotificationIds] = useState<string[]>([]);
 
+  useEffect(() => {
+    if (!isCompanyInactive) {
+      return;
+    }
+
+    if (isPathAllowedForInactiveCompany(pathname)) {
+      return;
+    }
+
+    router.replace("/dashboard/settings");
+  }, [isCompanyInactive, pathname, router]);
+
   const requestsQuery = useQuery<RequestItem[]>({
     queryKey: REQUESTS_QUERY_KEY,
     queryFn: fetchRequestsForNotifications,
     staleTime: REQUESTS_STALE_TIME_MS,
-    enabled: Boolean(me.id),
+    enabled: Boolean(me.id) && !isCompanyInactive,
     refetchInterval: 60 * 1000,
   });
 
@@ -159,6 +186,10 @@ export function PortalFrame({ me, onLogout, title, subtitle, children }: PortalF
   );
 
   const notifications = useMemo<NotificationItem[]>(() => {
+    if (isCompanyInactive) {
+      return [];
+    }
+
     return (requestsQuery.data ?? [])
       .map((item) => {
         const parsedCreatedAt = Date.parse(item.createdAt);
@@ -185,7 +216,7 @@ export function PortalFrame({ me, onLogout, title, subtitle, children }: PortalF
         };
       })
       .sort((a, b) => b.createdAtMs - a.createdAtMs);
-  }, [requestsQuery.data]);
+  }, [isCompanyInactive, requestsQuery.data]);
 
   const persistClearedNotifications = useCallback(
     (ids: string[]) => {
@@ -288,9 +319,14 @@ export function PortalFrame({ me, onLogout, title, subtitle, children }: PortalF
   const openRequestFromNotification = useCallback(
     (requestId: string) => {
       setIsNotificationOpen(false);
+      if (isCompanyInactive) {
+        router.push("/dashboard/invoices");
+        return;
+      }
+
       router.push(`/dashboard/requests?requestId=${encodeURIComponent(requestId)}`);
     },
-    [router, setIsNotificationOpen],
+    [isCompanyInactive, router, setIsNotificationOpen],
   );
 
   return (
@@ -363,187 +399,189 @@ export function PortalFrame({ me, onLogout, title, subtitle, children }: PortalF
               <User size={18} />
               {me.name}
             </div>
-            <div ref={notificationWrapRef} style={{ position: "relative" }}>
-              <button
-                type="button"
-                onClick={() => setIsNotificationOpen((prev) => !prev)}
-                aria-expanded={isNotificationOpen}
-                aria-haspopup="dialog"
-                aria-label={`Notifications (${unreadNotifications.length} unread)`}
-                style={{
-                  position: "relative",
-                  display: "inline-flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  width: "2.2rem",
-                  height: "2.2rem",
-                  borderRadius: "999px",
-                  border: "1px solid #D7DDE5",
-                  background: "#FFFFFF",
-                  color: "#2D405E",
-                  cursor: "pointer",
-                }}
-              >
-                <Bell size={16} />
-                {unreadNotifications.length > 0 ? (
-                  <span
-                    style={{
-                      position: "absolute",
-                      top: "-0.3rem",
-                      right: "-0.3rem",
-                      minWidth: "1.1rem",
-                      height: "1.1rem",
-                      borderRadius: "999px",
-                      background: "#DC3545",
-                      color: "#FFFFFF",
-                      display: "inline-flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      fontSize: "0.68rem",
-                      fontWeight: 700,
-                      padding: "0 0.2rem",
-                    }}
-                  >
-                    {unreadNotifications.length > 99 ? "99+" : unreadNotifications.length}
-                  </span>
-                ) : null}
-              </button>
-
-              {isNotificationOpen ? (
-                <div
-                  role="dialog"
-                  aria-label="Notifications"
+            {!isCompanyInactive ? (
+              <div ref={notificationWrapRef} style={{ position: "relative" }}>
+                <button
+                  type="button"
+                  onClick={() => setIsNotificationOpen((prev) => !prev)}
+                  aria-expanded={isNotificationOpen}
+                  aria-haspopup="dialog"
+                  aria-label={`Notifications (${unreadNotifications.length} unread)`}
                   style={{
-                    position: "absolute",
-                    top: "calc(100% + 0.5rem)",
-                    right: 0,
-                    width: "min(24rem, calc(100vw - 2rem))",
-                    maxHeight: "22rem",
-                    overflow: "hidden",
+                    position: "relative",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    width: "2.2rem",
+                    height: "2.2rem",
+                    borderRadius: "999px",
                     border: "1px solid #D7DDE5",
-                    borderRadius: "12px",
                     background: "#FFFFFF",
-                    boxShadow: "0 14px 30px rgba(45, 64, 94, 0.18)",
-                    zIndex: 30,
-                    display: "grid",
-                    gridTemplateRows: "auto 1fr",
+                    color: "#2D405E",
+                    cursor: "pointer",
                   }}
                 >
+                  <Bell size={16} />
+                  {unreadNotifications.length > 0 ? (
+                    <span
+                      style={{
+                        position: "absolute",
+                        top: "-0.3rem",
+                        right: "-0.3rem",
+                        minWidth: "1.1rem",
+                        height: "1.1rem",
+                        borderRadius: "999px",
+                        background: "#DC3545",
+                        color: "#FFFFFF",
+                        display: "inline-flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        fontSize: "0.68rem",
+                        fontWeight: 700,
+                        padding: "0 0.2rem",
+                      }}
+                    >
+                      {unreadNotifications.length > 99 ? "99+" : unreadNotifications.length}
+                    </span>
+                  ) : null}
+                </button>
+
+                {isNotificationOpen ? (
                   <div
+                    role="dialog"
+                    aria-label="Notifications"
                     style={{
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "space-between",
-                      padding: "0.7rem 0.85rem",
-                      borderBottom: "1px solid #E6ECF3",
+                      position: "absolute",
+                      top: "calc(100% + 0.5rem)",
+                      right: 0,
+                      width: "min(24rem, calc(100vw - 2rem))",
+                      maxHeight: "22rem",
+                      overflow: "hidden",
+                      border: "1px solid #D7DDE5",
+                      borderRadius: "12px",
+                      background: "#FFFFFF",
+                      boxShadow: "0 14px 30px rgba(45, 64, 94, 0.18)",
+                      zIndex: 30,
+                      display: "grid",
+                      gridTemplateRows: "auto 1fr",
                     }}
                   >
-                    <strong style={{ color: "#2D405E" }}>Notifications</strong>
-                    {unreadNotifications.length > 0 ? (
-                      <button
-                        type="button"
-                        onClick={clearAllNotifications}
-                        style={{
-                          border: "none",
-                          background: "transparent",
-                          color: "#2D405E",
-                          cursor: "pointer",
-                          fontWeight: 600,
-                          display: "inline-flex",
-                          alignItems: "center",
-                          gap: "0.35rem",
-                        }}
-                      >
-                        <CheckCheck size={14} />
-                        Clear all
-                      </button>
-                    ) : null}
-                  </div>
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        padding: "0.7rem 0.85rem",
+                        borderBottom: "1px solid #E6ECF3",
+                      }}
+                    >
+                      <strong style={{ color: "#2D405E" }}>Notifications</strong>
+                      {unreadNotifications.length > 0 ? (
+                        <button
+                          type="button"
+                          onClick={clearAllNotifications}
+                          style={{
+                            border: "none",
+                            background: "transparent",
+                            color: "#2D405E",
+                            cursor: "pointer",
+                            fontWeight: 600,
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: "0.35rem",
+                          }}
+                        >
+                          <CheckCheck size={14} />
+                          Clear all
+                        </button>
+                      ) : null}
+                    </div>
 
-                  <div style={{ overflowY: "auto", padding: "0.75rem", display: "grid", gap: "0.6rem" }}>
-                    {requestsQuery.isLoading ? (
-                      <p style={{ margin: 0, color: "#6B7A90" }}>Loading activity...</p>
-                    ) : unreadNotifications.length === 0 ? (
-                      <p style={{ margin: 0, color: "#6B7A90" }}>No new activity.</p>
-                    ) : (
-                      unreadNotifications.map((notification) => {
-                        const tone =
-                          notification.status === "verified"
-                            ? { border: "#9DDCCB", background: "#E8F8F3" }
-                            : notification.status === "approved"
-                            ? { border: "#BFE8C9", background: "#ECF8EF" }
-                            : notification.status === "rejected"
-                              ? { border: "#F5C2C7", background: "#FDF2F3" }
-                              : { border: "#C4D9F8", background: "#EEF4FF" };
+                    <div style={{ overflowY: "auto", padding: "0.75rem", display: "grid", gap: "0.6rem" }}>
+                      {requestsQuery.isLoading ? (
+                        <p style={{ margin: 0, color: "#6B7A90" }}>Loading activity...</p>
+                      ) : unreadNotifications.length === 0 ? (
+                        <p style={{ margin: 0, color: "#6B7A90" }}>No new activity.</p>
+                      ) : (
+                        unreadNotifications.map((notification) => {
+                          const tone =
+                            notification.status === "verified"
+                              ? { border: "#9DDCCB", background: "#E8F8F3" }
+                              : notification.status === "approved"
+                              ? { border: "#BFE8C9", background: "#ECF8EF" }
+                              : notification.status === "rejected"
+                                ? { border: "#F5C2C7", background: "#FDF2F3" }
+                                : { border: "#C4D9F8", background: "#EEF4FF" };
 
-                        return (
-                          <article
-                            key={notification.id}
-                            style={{
-                              border: `1px solid ${tone.border}`,
-                              background: tone.background,
-                              borderRadius: "10px",
-                              padding: "0.6rem 0.65rem",
-                              display: "grid",
-                              gap: "0.3rem",
-                            }}
-                          >
-                            <div
+                          return (
+                            <article
+                              key={notification.id}
                               style={{
-                                display: "flex",
-                                alignItems: "center",
-                                justifyContent: "space-between",
-                                gap: "0.5rem",
+                                border: `1px solid ${tone.border}`,
+                                background: tone.background,
+                                borderRadius: "10px",
+                                padding: "0.6rem 0.65rem",
+                                display: "grid",
+                                gap: "0.3rem",
                               }}
                             >
-                              <strong style={{ color: "#2D405E", fontSize: "0.9rem" }}>
-                                {notification.title}
-                              </strong>
+                              <div
+                                style={{
+                                  display: "flex",
+                                  alignItems: "center",
+                                  justifyContent: "space-between",
+                                  gap: "0.5rem",
+                                }}
+                              >
+                                <strong style={{ color: "#2D405E", fontSize: "0.9rem" }}>
+                                  {notification.title}
+                                </strong>
+                                <button
+                                  type="button"
+                                  onClick={() => clearNotification(notification.id)}
+                                  style={{
+                                    border: "none",
+                                    background: "transparent",
+                                    color: "#2D405E",
+                                    cursor: "pointer",
+                                    fontSize: "0.8rem",
+                                    fontWeight: 600,
+                                    padding: 0,
+                                  }}
+                                >
+                                  Clear
+                                </button>
+                              </div>
                               <button
                                 type="button"
-                                onClick={() => clearNotification(notification.id)}
+                                onClick={() => openRequestFromNotification(notification.requestId)}
                                 style={{
                                   border: "none",
                                   background: "transparent",
-                                  color: "#2D405E",
-                                  cursor: "pointer",
-                                  fontSize: "0.8rem",
-                                  fontWeight: 600,
                                   padding: 0,
+                                  textAlign: "left",
+                                  display: "grid",
+                                  gap: "0.25rem",
+                                  cursor: "pointer",
+                                  color: "inherit",
                                 }}
                               >
-                                Clear
+                                <span style={{ color: "#44536A", fontSize: "0.84rem" }}>{notification.detail}</span>
+                                <span style={{ color: "#667892", fontSize: "0.77rem" }}>
+                                  {notification.createdAtMs > 0
+                                    ? new Date(notification.createdAtMs).toLocaleString()
+                                    : "Unknown time"}
+                                </span>
                               </button>
-                            </div>
-                            <button
-                              type="button"
-                              onClick={() => openRequestFromNotification(notification.requestId)}
-                              style={{
-                                border: "none",
-                                background: "transparent",
-                                padding: 0,
-                                textAlign: "left",
-                                display: "grid",
-                                gap: "0.25rem",
-                                cursor: "pointer",
-                                color: "inherit",
-                              }}
-                            >
-                              <span style={{ color: "#44536A", fontSize: "0.84rem" }}>{notification.detail}</span>
-                              <span style={{ color: "#667892", fontSize: "0.77rem" }}>
-                                {notification.createdAtMs > 0
-                                  ? new Date(notification.createdAtMs).toLocaleString()
-                                  : "Unknown time"}
-                              </span>
-                            </button>
-                          </article>
-                        );
-                      })
-                    )}
+                            </article>
+                          );
+                        })
+                      )}
+                    </div>
                   </div>
-                </div>
-              ) : null}
-            </div>
+                ) : null}
+              </div>
+            ) : null}
             <button onClick={onLogout} className="logout-btn" type="button">
               <LogOut size={16} /> Sign out
             </button>
@@ -551,6 +589,11 @@ export function PortalFrame({ me, onLogout, title, subtitle, children }: PortalF
         </header>
 
         <div className="portal-shell">
+          {isCompanyInactive ? (
+            <p className="inline-alert inline-alert-warning" style={{ margin: "0 0 0.9rem" }}>
+              Company request access is deactivated. Only Settings and Invoices are available.
+            </p>
+          ) : null}
           <div className="dashboard-stack">{children}</div>
         </div>
       </main>

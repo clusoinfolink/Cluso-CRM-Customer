@@ -600,7 +600,10 @@ function toAppealServiceLabel(appeal: RequestItem["reverificationAppeal"] | null
 function RequestsPageContent() {
   const { me, loading, logout } = usePortalSession();
   const searchParams = useSearchParams();
-  const { items, loading: requestsLoading, refreshRequests } = useRequestsData();
+  const requestsEnabled = Boolean(me) && me?.companyAccessStatus !== "inactive";
+  const { items, loading: requestsLoading, refreshRequests } = useRequestsData({
+    enabled: requestsEnabled,
+  });
   const [requestsReady, setRequestsReady] = useState(false);
   const [searchText, setSearchText] = useState("");
   const [createdDateFrom, setCreatedDateFrom] = useState("");
@@ -641,6 +644,11 @@ function RequestsPageContent() {
       return;
     }
 
+    if (!requestsEnabled) {
+      setRequestsReady(true);
+      return;
+    }
+
     let active = true;
 
     (async () => {
@@ -653,7 +661,7 @@ function RequestsPageContent() {
     return () => {
       active = false;
     };
-  }, [me, refreshRequests]);
+  }, [me, refreshRequests, requestsEnabled]);
 
   const normalizedSearch = searchText.trim().toLowerCase();
 
@@ -2015,7 +2023,7 @@ function RequestsPageContent() {
     );
   }
 
-  if (loading || requestsLoading || !me || !requestsReady) {
+  if (loading || (requestsEnabled && requestsLoading) || !me || !requestsReady) {
     return (
       <main className="portal-shell">
         <BlockCard tone="muted">

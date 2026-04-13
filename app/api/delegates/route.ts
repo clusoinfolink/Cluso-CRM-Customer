@@ -7,6 +7,8 @@ import User from "@/lib/models/User";
 import { sendTeamCredentialEmail } from "@/lib/teamCredentialsMail";
 
 const MANAGEABLE_ROLES = ["delegate", "delegate_user"] as const;
+const COMPANY_ACCESS_INACTIVE_ERROR =
+  "Your company access is deactivated. Only Settings and Invoices are available.";
 
 const createSchema = z.object({
   name: z.string().trim().min(2),
@@ -36,6 +38,10 @@ export async function GET(req: NextRequest) {
     const auth = await getCustomerAuthFromRequest(req);
     if (!auth) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    if (auth.companyAccessStatus === "inactive") {
+      return NextResponse.json({ error: COMPANY_ACCESS_INACTIVE_ERROR }, { status: 403 });
     }
 
     if (
@@ -116,6 +122,10 @@ export async function POST(req: NextRequest) {
         { error: "Only company account or delegate can create users." },
         { status: 403 },
       );
+    }
+
+    if (auth.companyAccessStatus === "inactive") {
+      return NextResponse.json({ error: COMPANY_ACCESS_INACTIVE_ERROR }, { status: 403 });
     }
 
     const body = await req.json();
@@ -212,6 +222,10 @@ export async function PATCH(req: NextRequest) {
     const auth = await getCustomerAuthFromRequest(req);
     if (!auth) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    if (auth.companyAccessStatus === "inactive") {
+      return NextResponse.json({ error: COMPANY_ACCESS_INACTIVE_ERROR }, { status: 403 });
     }
 
     if (auth.role !== "customer") {

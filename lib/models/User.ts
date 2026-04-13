@@ -152,6 +152,11 @@ const UserSchema = new Schema(
       type: PartnerProfileSchema,
       default: () => ({}),
     },
+    companyAccessStatus: {
+      type: String,
+      enum: ["active", "inactive"],
+      default: "active",
+    },
   },
   { timestamps: true },
 );
@@ -171,6 +176,7 @@ const hasDeactivatedByPath = Boolean(models.User?.schema.path("deactivatedBy"));
 const hasDeactivationReasonPath = Boolean(models.User?.schema.path("deactivationReason"));
 const hasAccessRoleHistoryPath = Boolean(models.User?.schema.path("accessRoleHistory"));
 const hasPartnerProfilePath = Boolean(models.User?.schema.path("partnerProfile"));
+const hasCompanyAccessStatusPath = Boolean(models.User?.schema.path("companyAccessStatus"));
 
 if (
   models.User &&
@@ -184,7 +190,8 @@ if (
     !hasDeactivatedByPath ||
     !hasDeactivationReasonPath ||
     !hasAccessRoleHistoryPath ||
-    !hasPartnerProfilePath)
+    !hasPartnerProfilePath ||
+    !hasCompanyAccessStatusPath)
 ) {
   delete models.User;
 }

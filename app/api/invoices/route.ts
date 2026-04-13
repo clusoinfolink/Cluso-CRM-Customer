@@ -159,6 +159,8 @@ function normalizePartyDetails(value: unknown): InvoicePartyDetails {
     loginEmail: normalizeWhitespace(asString(raw.loginEmail)),
     gstin: normalizeWhitespace(asString(raw.gstin)).toUpperCase(),
     cinRegistrationNumber: normalizeWhitespace(asString(raw.cinRegistrationNumber)),
+    sacCode: normalizeWhitespace(asString(raw.sacCode)),
+    ltuCode: normalizeWhitespace(asString(raw.ltuCode)),
     address: normalizeWhitespace(asString(raw.address)),
     invoiceEmail: normalizeWhitespace(asString(raw.invoiceEmail)),
     billingSameAsCompany: Boolean(raw.billingSameAsCompany),

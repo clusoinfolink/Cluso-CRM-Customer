@@ -28,11 +28,19 @@ type CountCard = {
 
 export default function DashboardOverviewPage() {
   const { me, loading, logout } = usePortalSession();
-  const { items, loading: requestsLoading, refreshRequests } = useRequestsData();
+  const requestsEnabled = Boolean(me) && me?.companyAccessStatus !== "inactive";
+  const { items, loading: requestsLoading, refreshRequests } = useRequestsData({
+    enabled: requestsEnabled,
+  });
   const [requestsReady, setRequestsReady] = useState(false);
 
   useEffect(() => {
     if (!me) {
+      return;
+    }
+
+    if (!requestsEnabled) {
+      setRequestsReady(true);
       return;
     }
 
@@ -48,9 +56,9 @@ export default function DashboardOverviewPage() {
     return () => {
       active = false;
     };
-  }, [me, refreshRequests]);
+  }, [me, refreshRequests, requestsEnabled]);
 
-  if (loading || requestsLoading || !me || !requestsReady) {
+  if (loading || (requestsEnabled && requestsLoading) || !me || !requestsReady) {
     return (
       <main className="portal-shell">
         <BlockCard tone="muted">

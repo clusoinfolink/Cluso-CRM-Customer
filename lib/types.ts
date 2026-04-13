@@ -18,6 +18,7 @@ export type PortalUser = {
   email: string;
   role: PortalRole;
   companyId: string;
+  companyAccessStatus: "active" | "inactive";
   availableServices: ServiceOption[];
 };
 
@@ -46,6 +47,8 @@ export type PartnerProfile = {
     companyName: string;
     gstin: string;
     cinRegistrationNumber: string;
+    sacCode?: string;
+    ltuCode?: string;
     address: PartnerProfileAddress;
     documents: PartnerProfileDocument[];
   };
@@ -151,6 +154,8 @@ export type InvoicePartyDetails = {
   loginEmail: string;
   gstin: string;
   cinRegistrationNumber: string;
+  sacCode: string;
+  ltuCode: string;
   address: string;
   invoiceEmail: string;
   billingSameAsCompany: boolean;
@@ -211,6 +216,7 @@ export type CandidateAnswer = {
 export type CandidateServiceResponse = {
   serviceId: string;
   serviceName: string;
+  serviceEntryCount?: number;
   answers: CandidateAnswer[];
 };
 

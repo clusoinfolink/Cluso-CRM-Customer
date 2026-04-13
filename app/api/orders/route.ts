@@ -66,6 +66,8 @@ const APPEAL_ATTACHMENT_MIME_TYPES = new Set([
   "image/webp",
 ]);
 const DEFAULT_PERSONAL_DETAILS_SERVICE_NAME = "Personal details";
+const COMPANY_ACCESS_INACTIVE_ERROR =
+  "Your company access is deactivated. Only Settings and Invoices are available.";
 const DEFAULT_PERSONAL_DETAILS_FORM_FIELDS = [
   {
     fieldKey: "personal_full_name",
@@ -1012,6 +1014,10 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  if (auth.companyAccessStatus === "inactive") {
+    return NextResponse.json({ error: COMPANY_ACCESS_INACTIVE_ERROR }, { status: 403 });
+  }
+
   const companyId = companyIdFromAuth(auth);
   if (!companyId) {
     return NextResponse.json({ error: "Invalid account mapping." }, { status: 400 });
@@ -1153,9 +1159,35 @@ export async function GET(req: NextRequest) {
       visibleServiceIds.has(String(verification.serviceId)),
     );
 
-    const visibleCandidateFormResponses = (item.candidateFormResponses ?? []).filter(
-      (serviceResponse) => visibleServiceIds.has(String(serviceResponse.serviceId)),
-    );
+    const visibleCandidateFormResponses = (item.candidateFormResponses ?? [])
+      .filter((serviceResponse) => visibleServiceIds.has(String(serviceResponse.serviceId)))
+      .map((serviceResponse) => {
+        const serviceEntryCountRaw = Number(serviceResponse.serviceEntryCount);
+        const serviceEntryCount =
+          Number.isFinite(serviceEntryCountRaw) && serviceEntryCountRaw > 0
+            ? Math.floor(serviceEntryCountRaw)
+            : 1;
+
+        return {
+          serviceId: String(serviceResponse.serviceId),
+          serviceName: serviceResponse.serviceName,
+          serviceEntryCount,
+          answers: (serviceResponse.answers ?? []).map((answer) => ({
+            fieldKey: answer.fieldKey ?? "",
+            question: answer.question,
+            fieldType: answer.fieldType,
+            required: Boolean(answer.required),
+            repeatable: Boolean(answer.repeatable),
+            notApplicable: Boolean(answer.notApplicable),
+            notApplicableText: answer.notApplicableText ?? "",
+            value: answer.value,
+            fileName: answer.fileName ?? "",
+            fileMimeType: answer.fileMimeType ?? "",
+            fileSize: answer.fileSize ?? null,
+            fileData: answer.fileData ?? "",
+          })),
+        };
+      });
 
     const visibleCustomerRejectedFields = (item.customerRejectedFields ?? []).filter((field) =>
       visibleServiceIds.has(String(field.serviceId)),
@@ -1203,6 +1235,10 @@ export async function POST(req: NextRequest) {
   const auth = await getCustomerAuthFromRequest(req);
   if (!auth) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  if (auth.companyAccessStatus === "inactive") {
+    return NextResponse.json({ error: COMPANY_ACCESS_INACTIVE_ERROR }, { status: 403 });
   }
 
   const companyId = companyIdFromAuth(auth);
@@ -1348,6 +1384,10 @@ export async function PATCH(req: NextRequest) {
   const auth = await getCustomerAuthFromRequest(req);
   if (!auth) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  if (auth.companyAccessStatus === "inactive") {
+    return NextResponse.json({ error: COMPANY_ACCESS_INACTIVE_ERROR }, { status: 403 });
   }
 
   const companyId = companyIdFromAuth(auth);

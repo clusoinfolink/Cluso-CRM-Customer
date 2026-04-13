@@ -15,6 +15,12 @@ type AuthPayload = {
   sessionVersion: number;
 };
 
+type CompanyAccessStatus = "active" | "inactive";
+
+type CustomerAuth = AuthPayload & {
+  companyAccessStatus: CompanyAccessStatus;
+};
+
 type RawAuthPayload = {
   userId?: unknown;
   role?: unknown;
@@ -53,7 +59,7 @@ function normalizeAuthPayload(value: unknown): AuthPayload | null {
   };
 }
 
-async function hydrateCustomerAuthFromToken(token?: string) {
+async function hydrateCustomerAuthFromToken(token?: string): Promise<CustomerAuth | null> {
   if (!token) {
     return null;
   }
@@ -66,7 +72,7 @@ async function hydrateCustomerAuthFromToken(token?: string) {
   await connectMongo();
 
   const user = await User.findById(payload.userId)
-    .select("_id role parentCustomer sessionVersion isActive")
+    .select("_id role parentCustomer sessionVersion isActive companyAccessStatus")
     .lean();
   if (!user || !isPortalRole(user.role)) {
     return null;
@@ -81,11 +87,37 @@ async function hydrateCustomerAuthFromToken(token?: string) {
     return null;
   }
 
+  const companyId =
+    user.role === "customer"
+      ? String(user._id)
+      : user.parentCustomer
+        ? String(user.parentCustomer)
+        : null;
+  if (!companyId) {
+    return null;
+  }
+
+  let companyAccessStatus: CompanyAccessStatus = "active";
+  if (user.role === "customer") {
+    companyAccessStatus = user.companyAccessStatus === "inactive" ? "inactive" : "active";
+  } else {
+    const company = await User.findById(companyId)
+      .select("_id isActive companyAccessStatus")
+      .lean();
+
+    if (!company || company.isActive === false) {
+      return null;
+    }
+
+    companyAccessStatus = company.companyAccessStatus === "inactive" ? "inactive" : "active";
+  }
+
   return {
     userId: String(user._id),
     role: user.role,
     parentCustomerId: user.parentCustomer ? String(user.parentCustomer) : null,
     sessionVersion: currentSessionVersion,
+    companyAccessStatus,
   };
 }
 

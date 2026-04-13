@@ -74,6 +74,7 @@ const VerificationRequestSchema = new Schema(
           required: true,
         },
         serviceName: { type: String, required: true },
+        serviceEntryCount: { type: Number, default: 1, min: 1 },
         answers: [
           {
             fieldKey: { type: String, default: "" },
@@ -268,6 +269,7 @@ if (
     !models.VerificationRequest.schema.path("createdByDelegate") ||
     !models.VerificationRequest.schema.path("candidateUser") ||
     !models.VerificationRequest.schema.path("customerRejectedFields.fieldKey") ||
+    !models.VerificationRequest.schema.path("candidateFormResponses.serviceEntryCount") ||
     !models.VerificationRequest.schema.path("candidateFormResponses.answers.fileData") ||
     !models.VerificationRequest.schema.path("candidateFormResponses.answers.fieldKey") ||
     !models.VerificationRequest.schema.path("candidateFormResponses.answers.notApplicable") ||

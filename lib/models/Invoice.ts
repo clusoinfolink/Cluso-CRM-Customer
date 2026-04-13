@@ -7,6 +7,8 @@ const InvoicePartyDetailsSchema = new Schema(
     loginEmail: { type: String, default: "", trim: true },
     gstin: { type: String, default: "", trim: true },
     cinRegistrationNumber: { type: String, default: "", trim: true },
+    sacCode: { type: String, default: "", trim: true },
+    ltuCode: { type: String, default: "", trim: true },
     address: { type: String, default: "", trim: true },
     invoiceEmail: { type: String, default: "", trim: true },
     billingSameAsCompany: { type: Boolean, default: true },
@@ -107,6 +109,10 @@ const hasGstRatePath = Boolean(models.Invoice?.schema.path("gstRate"));
 const hasCustomerPath = Boolean(models.Invoice?.schema.path("customer"));
 const hasEnterpriseDetailsPath = Boolean(models.Invoice?.schema.path("enterpriseDetails"));
 const hasClusoDetailsPath = Boolean(models.Invoice?.schema.path("clusoDetails"));
+const hasEnterpriseSacCodePath = Boolean(models.Invoice?.schema.path("enterpriseDetails.sacCode"));
+const hasEnterpriseLtuCodePath = Boolean(models.Invoice?.schema.path("enterpriseDetails.ltuCode"));
+const hasClusoSacCodePath = Boolean(models.Invoice?.schema.path("clusoDetails.sacCode"));
+const hasClusoLtuCodePath = Boolean(models.Invoice?.schema.path("clusoDetails.ltuCode"));
 const hasLineItemsPath = Boolean(models.Invoice?.schema.path("lineItems"));
 const hasUsageCountPath = Boolean(models.Invoice?.schema.path("lineItems.usageCount"));
 const hasLineTotalPath = Boolean(models.Invoice?.schema.path("lineItems.lineTotal"));
@@ -120,6 +126,10 @@ if (
     !hasCustomerPath ||
     !hasEnterpriseDetailsPath ||
     !hasClusoDetailsPath ||
+    !hasEnterpriseSacCodePath ||
+    !hasEnterpriseLtuCodePath ||
+    !hasClusoSacCodePath ||
+    !hasClusoLtuCodePath ||
     !hasLineItemsPath ||
     !hasUsageCountPath ||
     !hasLineTotalPath)
