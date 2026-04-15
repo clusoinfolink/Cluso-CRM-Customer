@@ -76,11 +76,22 @@ const InvoicePaymentDetailsSchema = new Schema(
   { _id: false },
 );
 
+const InvoicePaymentRelatedFileSchema = new Schema(
+  {
+    fileData: { type: String, default: "", trim: true },
+    fileName: { type: String, default: "", trim: true },
+    fileMimeType: { type: String, default: "", trim: true },
+    fileSize: { type: Number, min: 0, default: 0 },
+    uploadedAt: { type: Date, default: null },
+  },
+  { _id: false },
+);
+
 const InvoicePaymentProofSchema = new Schema(
   {
     method: {
       type: String,
-      enum: ["upi", "wireTransfer"],
+      enum: ["upi", "wireTransfer", "adminUpload"],
       default: "upi",
     },
     screenshotData: { type: String, default: "", trim: true },
@@ -88,6 +99,10 @@ const InvoicePaymentProofSchema = new Schema(
     screenshotMimeType: { type: String, default: "", trim: true },
     screenshotFileSize: { type: Number, min: 0, default: 0 },
     uploadedAt: { type: Date, default: null },
+    relatedFiles: {
+      type: [InvoicePaymentRelatedFileSchema],
+      default: [],
+    },
   },
   { _id: false },
 );

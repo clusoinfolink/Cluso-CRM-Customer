@@ -4,6 +4,7 @@ import { SUPPORTED_CURRENCIES } from "@/lib/currencies";
 import { getCustomerAuthFromRequest } from "@/lib/auth";
 import { connectMongo } from "@/lib/mongodb";
 import Invoice from "@/lib/models/Invoice";
+import { sendPaymentReceiptAcknowledgementEmail } from "@/lib/paymentReceiptAcknowledgementMail";
 import type {
   InvoiceCurrencyTotal,
   InvoiceLineItem,
@@ -19,6 +20,7 @@ import type {
 const SUPPORTED_CURRENCY_SET = new Set<string>(SUPPORTED_CURRENCIES);
 const BILLING_MONTH_REGEX = /^\d{4}-(0[1-9]|1[0-2])$/;
 const MAX_PAYMENT_PROOF_BYTES = 5 * 1024 * 1024;
+const MAX_RELATED_PAYMENT_FILES = 5;
 
 const submitPaymentProofSchema = z.object({
   action: z.literal("submit-payment-proof"),
@@ -29,6 +31,26 @@ const submitPaymentProofSchema = z.object({
   screenshotMimeType: z.string().min(1),
   screenshotFileSize: z.number().min(1).max(MAX_PAYMENT_PROOF_BYTES),
 });
+
+const removePaymentProofSchema = z.object({
+  action: z.literal("remove-payment-proof"),
+  invoiceId: z.string().min(1),
+});
+
+const addRelatedPaymentFileSchema = z.object({
+  action: z.literal("add-related-payment-file"),
+  invoiceId: z.string().min(1),
+  fileData: z.string().min(1),
+  fileName: z.string().min(1),
+  fileMimeType: z.string().min(1),
+  fileSize: z.number().min(1).max(MAX_PAYMENT_PROOF_BYTES),
+});
+
+const paymentProofActionSchema = z.discriminatedUnion("action", [
+  submitPaymentProofSchema,
+  removePaymentProofSchema,
+  addRelatedPaymentFileSchema,
+]);
 
 function asRecord(value: unknown) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -95,6 +117,34 @@ function normalizeInvoicePaymentStatus(
   return fallback;
 }
 
+function normalizeInvoicePaymentRelatedFile(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+
+  const raw = asRecord(value);
+  const fileData = asString(raw.fileData).trim();
+  const fileName = asString(raw.fileName).trim();
+  const fileMimeType = asString(raw.fileMimeType).trim().toLowerCase();
+  const fileSizeRaw = Number(raw.fileSize);
+  const uploadedAt = new Date(String(raw.uploadedAt ?? ""));
+
+  if (!fileData || !fileName || !fileMimeType || Number.isNaN(uploadedAt.getTime())) {
+    return null;
+  }
+
+  return {
+    fileData,
+    fileName,
+    fileMimeType,
+    fileSize:
+      Number.isFinite(fileSizeRaw) && fileSizeRaw > 0
+        ? Math.trunc(fileSizeRaw)
+        : 0,
+    uploadedAt: uploadedAt.toISOString(),
+  };
+}
+
 function normalizeInvoicePaymentProof(value: unknown): InvoicePaymentProof | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return null;
@@ -102,13 +152,20 @@ function normalizeInvoicePaymentProof(value: unknown): InvoicePaymentProof | nul
 
   const raw = asRecord(value);
   const methodRaw = asString(raw.method).trim();
-  const method: InvoicePaymentMethod =
-    methodRaw === "wireTransfer" ? "wireTransfer" : "upi";
+  let method: InvoicePaymentMethod = "upi";
+  if (methodRaw === "wireTransfer" || methodRaw === "adminUpload") {
+    method = methodRaw;
+  }
   const screenshotData = asString(raw.screenshotData).trim();
   const screenshotFileName = asString(raw.screenshotFileName).trim();
   const screenshotMimeType = asString(raw.screenshotMimeType).trim();
   const screenshotFileSizeRaw = Number(raw.screenshotFileSize);
   const uploadedAt = new Date(String(raw.uploadedAt ?? ""));
+  const relatedFiles = Array.isArray(raw.relatedFiles)
+    ? raw.relatedFiles
+        .map((entry) => normalizeInvoicePaymentRelatedFile(entry))
+        .filter((entry): entry is NonNullable<ReturnType<typeof normalizeInvoicePaymentRelatedFile>> => Boolean(entry))
+    : [];
 
   if (
     !screenshotData ||
@@ -129,6 +186,7 @@ function normalizeInvoicePaymentProof(value: unknown): InvoicePaymentProof | nul
         ? Math.trunc(screenshotFileSizeRaw)
         : 0,
     uploadedAt: uploadedAt.toISOString(),
+    relatedFiles,
   };
 }
 
@@ -159,6 +217,10 @@ function normalizeReceiptDataUrl(dataUrl: string) {
   } catch {
     return null;
   }
+}
+
+function isAllowedRelatedFileMimeType(mimeType: string) {
+  return mimeType.startsWith("image/") || mimeType === "application/pdf";
 }
 
 function getCurrentBillingMonth(date = new Date()) {
@@ -474,12 +536,122 @@ export async function PATCH(req: NextRequest) {
   }
 
   const body = await req.json();
-  const parsed = submitPaymentProofSchema.safeParse(body);
+  const parsed = paymentProofActionSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json({ error: "Invalid payment proof payload." }, { status: 400 });
   }
 
-  const normalizedDataUrlPayload = normalizeReceiptDataUrl(parsed.data.screenshotData);
+  await connectMongo();
+
+  if (parsed.data.action === "remove-payment-proof") {
+    const invoiceDoc = await Invoice.findOne({
+      _id: parsed.data.invoiceId,
+      customer: companyId,
+    });
+
+    if (!invoiceDoc) {
+      return NextResponse.json({ error: "Invoice not found." }, { status: 404 });
+    }
+
+    invoiceDoc.paymentProof = null;
+    invoiceDoc.paymentStatus = "unpaid";
+    invoiceDoc.paidAt = null;
+
+    await invoiceDoc.save();
+
+    return NextResponse.json({
+      message: "Previously uploaded payment receipt deleted.",
+      invoice: normalizeInvoiceRecord(
+        invoiceDoc.toObject() as unknown as Record<string, unknown>,
+      ),
+    });
+  }
+
+  if (parsed.data.action === "add-related-payment-file") {
+    const relatedPayload = parsed.data;
+    const normalizedDataUrlPayload = normalizeReceiptDataUrl(relatedPayload.fileData);
+    if (!normalizedDataUrlPayload) {
+      return NextResponse.json(
+        { error: "Invalid related file format. Upload a valid file." },
+        { status: 400 },
+      );
+    }
+
+    if (normalizedDataUrlPayload.byteLength > MAX_PAYMENT_PROOF_BYTES) {
+      return NextResponse.json(
+        { error: "Related file must be 5 MB or smaller." },
+        { status: 400 },
+      );
+    }
+
+    const payloadMimeType = normalizeWhitespace(relatedPayload.fileMimeType).toLowerCase();
+    const normalizedMimeType = normalizedDataUrlPayload.mimeType;
+    const effectiveMimeType = payloadMimeType || normalizedMimeType;
+
+    if (!isAllowedRelatedFileMimeType(effectiveMimeType)) {
+      return NextResponse.json(
+        { error: "Only image or PDF files are supported for related information." },
+        { status: 400 },
+      );
+    }
+
+    const invoiceDoc = await Invoice.findOne({
+      _id: relatedPayload.invoiceId,
+      customer: companyId,
+    });
+
+    if (!invoiceDoc) {
+      return NextResponse.json({ error: "Invoice not found." }, { status: 404 });
+    }
+
+    const existingProof = normalizeInvoicePaymentProof(invoiceDoc.paymentProof);
+    if (!existingProof || invoiceDoc.paymentStatus !== "submitted") {
+      return NextResponse.json(
+        { error: "Related files can only be uploaded while payment is under process." },
+        { status: 400 },
+      );
+    }
+
+    const nextRelatedFiles = [
+      ...existingProof.relatedFiles,
+      {
+        fileData: normalizedDataUrlPayload.normalizedDataUrl,
+        fileName: normalizeWhitespace(relatedPayload.fileName).slice(0, 160),
+        fileMimeType: effectiveMimeType,
+        fileSize: normalizedDataUrlPayload.byteLength,
+        uploadedAt: new Date().toISOString(),
+      },
+    ].slice(-MAX_RELATED_PAYMENT_FILES);
+
+    invoiceDoc.set("paymentProof", {
+      method: existingProof.method,
+      screenshotData: existingProof.screenshotData,
+      screenshotFileName: existingProof.screenshotFileName,
+      screenshotMimeType: existingProof.screenshotMimeType,
+      screenshotFileSize: existingProof.screenshotFileSize,
+      uploadedAt: new Date(existingProof.uploadedAt),
+      relatedFiles: nextRelatedFiles.map((entry) => ({
+        fileData: entry.fileData,
+        fileName: entry.fileName,
+        fileMimeType: entry.fileMimeType,
+        fileSize: entry.fileSize,
+        uploadedAt: new Date(entry.uploadedAt),
+      })),
+    });
+
+    await invoiceDoc.save();
+
+    return NextResponse.json({
+      message: "Related information file uploaded successfully.",
+      invoice: normalizeInvoiceRecord(
+        invoiceDoc.toObject() as unknown as Record<string, unknown>,
+      ),
+    });
+  }
+
+  const submitPayload = parsed.data;
+
+  const normalizedDataUrlPayload = normalizeReceiptDataUrl(submitPayload.screenshotData);
   if (!normalizedDataUrlPayload) {
     return NextResponse.json(
       { error: "Invalid payment receipt format. Upload a valid file screenshot." },
@@ -494,7 +666,7 @@ export async function PATCH(req: NextRequest) {
     );
   }
 
-  const payloadMimeType = normalizeWhitespace(parsed.data.screenshotMimeType).toLowerCase();
+  const payloadMimeType = normalizeWhitespace(submitPayload.screenshotMimeType).toLowerCase();
   const normalizedMimeType = normalizedDataUrlPayload.mimeType;
   const effectiveMimeType = payloadMimeType || normalizedMimeType;
 
@@ -505,10 +677,8 @@ export async function PATCH(req: NextRequest) {
     );
   }
 
-  await connectMongo();
-
   const invoiceDoc = await Invoice.findOne({
-    _id: parsed.data.invoiceId,
+    _id: submitPayload.invoiceId,
     customer: companyId,
   });
 
@@ -518,21 +688,37 @@ export async function PATCH(req: NextRequest) {
 
   invoiceDoc.paymentStatus = "submitted";
   invoiceDoc.paidAt = null;
-  invoiceDoc.paymentProof = {
-    method: parsed.data.method,
+  invoiceDoc.set("paymentProof", {
+    method: submitPayload.method,
     screenshotData: normalizedDataUrlPayload.normalizedDataUrl,
-    screenshotFileName: normalizeWhitespace(parsed.data.screenshotFileName).slice(0, 160),
+    screenshotFileName: normalizeWhitespace(submitPayload.screenshotFileName).slice(0, 160),
     screenshotMimeType: effectiveMimeType,
     screenshotFileSize: normalizedDataUrlPayload.byteLength,
     uploadedAt: new Date(),
-  };
+    relatedFiles: [],
+  });
 
   await invoiceDoc.save();
 
+  const normalizedInvoice = normalizeInvoiceRecord(
+    invoiceDoc.toObject() as unknown as Record<string, unknown>,
+  );
+  const emailResult = await sendPaymentReceiptAcknowledgementEmail({
+    recipientName: normalizedInvoice.customerName || "Customer",
+    recipientEmail: normalizedInvoice.customerEmail,
+    invoiceNumber: normalizedInvoice.invoiceNumber,
+    billingMonth: normalizedInvoice.billingMonth,
+    paymentMethod: submitPayload.method,
+  });
+  const responseMessage = emailResult.sent
+    ? "Payment receipt uploaded successfully. Awaiting admin confirmation. A thank-you email has been sent to your registered email."
+    : "Payment receipt uploaded successfully. Awaiting admin confirmation.";
+
   return NextResponse.json({
-    message: "Payment receipt uploaded successfully. Awaiting admin confirmation.",
-    invoice: normalizeInvoiceRecord(
-      invoiceDoc.toObject() as unknown as Record<string, unknown>,
-    ),
+    message: responseMessage,
+    emailWarning: emailResult.sent
+      ? null
+      : emailResult.reason ?? "Customer acknowledgement email could not be sent.",
+    invoice: normalizedInvoice,
   });
 }

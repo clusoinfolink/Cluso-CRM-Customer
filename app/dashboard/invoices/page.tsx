@@ -10,6 +10,7 @@ import { getAlertTone } from "@/lib/alerts";
 import type { InvoiceRecord } from "@/lib/types";
 
 const CHART_DAYS = 30;
+const PAYMENT_REQUEST_TIMEOUT_MS = 20000;
 
 type TimelinePoint = {
   date: string;
@@ -40,6 +41,14 @@ type MonthSummaryRow = {
 
 type PaymentMethod = "upi" | "wireTransfer";
 
+function getPaymentProofMethodLabel(method: "upi" | "wireTransfer" | "adminUpload") {
+  if (method === "adminUpload") {
+    return "Admin Upload";
+  }
+
+  return method === "wireTransfer" ? "Wire Transfer" : "UPI";
+}
+
 function getPaymentStatusMeta(status: InvoiceRecord["paymentStatus"]) {
   if (status === "paid") {
     return {
@@ -53,10 +62,10 @@ function getPaymentStatusMeta(status: InvoiceRecord["paymentStatus"]) {
 
   if (status === "submitted") {
     return {
-      label: "Receipt Uploaded",
-      background: "#FEF3C7",
-      border: "#FDE68A",
-      color: "#92400E",
+      label: "Payment Under Process",
+      background: "#ECFDF5",
+      border: "#6EE7B7",
+      color: "#047857",
       openAllowed: true,
     };
   }
@@ -68,6 +77,17 @@ function getPaymentStatusMeta(status: InvoiceRecord["paymentStatus"]) {
     color: "#1D4ED8",
     openAllowed: true,
   };
+}
+
+function getPaymentActionMeta(invoice: InvoiceRecord) {
+  if (invoice.paymentStatus === "submitted") {
+    return {
+      ...getPaymentStatusMeta("submitted"),
+      openAllowed: true,
+    };
+  }
+
+  return getPaymentStatusMeta(invoice.paymentStatus);
 }
 
 function clampGstRate(value: number) {
@@ -309,9 +329,18 @@ export default function CustomerInvoicesPage() {
   const [paymentReceiptFileName, setPaymentReceiptFileName] = useState("");
   const [paymentReceiptMimeType, setPaymentReceiptMimeType] = useState("");
   const [paymentReceiptFileSize, setPaymentReceiptFileSize] = useState(0);
+  const [relatedInfoData, setRelatedInfoData] = useState("");
+  const [relatedInfoFileName, setRelatedInfoFileName] = useState("");
+  const [relatedInfoMimeType, setRelatedInfoMimeType] = useState("");
+  const [relatedInfoFileSize, setRelatedInfoFileSize] = useState(0);
   const [submittingPaymentReceipt, setSubmittingPaymentReceipt] = useState(false);
+  const [removingPaymentReceipt, setRemovingPaymentReceipt] = useState(false);
+  const [uploadingRelatedInfo, setUploadingRelatedInfo] = useState(false);
+  const [paymentModalMessage, setPaymentModalMessage] = useState("");
   const [overviewCardIndex, setOverviewCardIndex] = useState(0);
   const overviewCardRefs = useRef<Array<HTMLDivElement | null>>([]);
+  const paymentReceiptInputRef = useRef<HTMLInputElement | null>(null);
+  const relatedInfoInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     if (me?.id) fetchInvoices();
@@ -351,8 +380,10 @@ export default function CustomerInvoicesPage() {
       document.body.appendChild(a);
       a.click();
       window.URL.revokeObjectURL(url);
-    } catch (e: any) {
-      setMessage(e.message || "Error building PDF.");
+    } catch (error) {
+      const reason =
+        error instanceof Error ? error.message : "Error building PDF.";
+      setMessage(reason);
     }
     setDownloadingId(null);
   }
@@ -391,17 +422,53 @@ export default function CustomerInvoicesPage() {
     }
   }
 
+  function clearSelectedPaymentReceipt() {
+    setPaymentReceiptData("");
+    setPaymentReceiptFileName("");
+    setPaymentReceiptMimeType("");
+    setPaymentReceiptFileSize(0);
+    if (paymentReceiptInputRef.current) {
+      paymentReceiptInputRef.current.value = "";
+    }
+  }
+
+  function openPaymentReceiptPicker() {
+    paymentReceiptInputRef.current?.click();
+  }
+
+  function clearSelectedRelatedInfoFile() {
+    setRelatedInfoData("");
+    setRelatedInfoFileName("");
+    setRelatedInfoMimeType("");
+    setRelatedInfoFileSize(0);
+    if (relatedInfoInputRef.current) {
+      relatedInfoInputRef.current.value = "";
+    }
+  }
+
+  function openRelatedInfoPicker() {
+    relatedInfoInputRef.current?.click();
+  }
+
   function openPaymentModal(invoice: InvoiceRecord) {
-    if (invoice.paymentStatus === "paid") {
+    if (!getPaymentActionMeta(invoice).openAllowed) {
       return;
     }
 
     setPaymentInvoiceId(invoice.id);
     setIsPaymentMethodEntered(false);
-    setPaymentReceiptData("");
-    setPaymentReceiptFileName("");
-    setPaymentReceiptMimeType("");
-    setPaymentReceiptFileSize(0);
+    clearSelectedPaymentReceipt();
+    clearSelectedRelatedInfoFile();
+    setUploadingRelatedInfo(false);
+    setPaymentModalMessage("");
+
+    if (invoice.paymentStatus === "submitted" && invoice.paymentProof) {
+      setSelectedPaymentMethod(
+        invoice.paymentProof.method === "wireTransfer" ? "wireTransfer" : "upi",
+      );
+      setIsPaymentMethodEntered(true);
+      return;
+    }
 
     const hasUpiDetails =
       Boolean(invoice.paymentDetails.upi.upiId) ||
@@ -422,10 +489,10 @@ export default function CustomerInvoicesPage() {
   function closePaymentModal() {
     setPaymentInvoiceId(null);
     setIsPaymentMethodEntered(false);
-    setPaymentReceiptData("");
-    setPaymentReceiptFileName("");
-    setPaymentReceiptMimeType("");
-    setPaymentReceiptFileSize(0);
+    clearSelectedPaymentReceipt();
+    clearSelectedRelatedInfoFile();
+    setUploadingRelatedInfo(false);
+    setPaymentModalMessage("");
   }
 
   function enterPaymentMethod(method: PaymentMethod) {
@@ -436,20 +503,19 @@ export default function CustomerInvoicesPage() {
   async function onPaymentReceiptFileChange(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     if (!file) {
-      setPaymentReceiptData("");
-      setPaymentReceiptFileName("");
-      setPaymentReceiptMimeType("");
-      setPaymentReceiptFileSize(0);
+      clearSelectedPaymentReceipt();
       return;
     }
 
     if (!file.type.startsWith("image/")) {
+      setPaymentModalMessage("Please upload an image screenshot for payment receipt.");
       setMessage("Please upload an image screenshot for payment receipt.");
       event.target.value = "";
       return;
     }
 
     if (file.size > 5 * 1024 * 1024) {
+      setPaymentModalMessage("Payment receipt must be 5 MB or smaller.");
       setMessage("Payment receipt must be 5 MB or smaller.");
       event.target.value = "";
       return;
@@ -463,6 +529,7 @@ export default function CustomerInvoicesPage() {
     }).catch(() => "");
 
     if (!fileData) {
+      setPaymentModalMessage("Could not read the selected file.");
       setMessage("Could not read the selected file.");
       return;
     }
@@ -471,6 +538,170 @@ export default function CustomerInvoicesPage() {
     setPaymentReceiptFileName(file.name);
     setPaymentReceiptMimeType(file.type);
     setPaymentReceiptFileSize(file.size);
+    setPaymentModalMessage("");
+  }
+
+  async function onRelatedInfoFileChange(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) {
+      clearSelectedRelatedInfoFile();
+      return;
+    }
+
+    const isImage = file.type.startsWith("image/");
+    const isPdf = file.type === "application/pdf";
+    if (!isImage && !isPdf) {
+      setPaymentModalMessage("Upload an image or PDF file for related information.");
+      setMessage("Upload an image or PDF file for related information.");
+      event.target.value = "";
+      return;
+    }
+
+    if (file.size > 5 * 1024 * 1024) {
+      setPaymentModalMessage("Related file must be 5 MB or smaller.");
+      setMessage("Related file must be 5 MB or smaller.");
+      event.target.value = "";
+      return;
+    }
+
+    const fileData = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result ?? ""));
+      reader.onerror = () => reject(new Error("Could not read the selected related file."));
+      reader.readAsDataURL(file);
+    }).catch(() => "");
+
+    if (!fileData) {
+      setPaymentModalMessage("Could not read the selected related file.");
+      setMessage("Could not read the selected related file.");
+      return;
+    }
+
+    setRelatedInfoData(fileData);
+    setRelatedInfoFileName(file.name);
+    setRelatedInfoMimeType(file.type);
+    setRelatedInfoFileSize(file.size);
+    setPaymentModalMessage("");
+  }
+
+  async function submitRelatedInfoFile() {
+    if (!paymentInvoice || paymentInvoice.paymentStatus !== "submitted") {
+      return;
+    }
+
+    if (!relatedInfoData || !relatedInfoFileName || !relatedInfoMimeType) {
+      setPaymentModalMessage("Choose a related file first. The file picker is opened for you.");
+      openRelatedInfoPicker();
+      setMessage("Upload a related file before submitting.");
+      return;
+    }
+
+    setUploadingRelatedInfo(true);
+    setPaymentModalMessage("");
+    setMessage("");
+
+    const controller = new AbortController();
+    const timeoutHandle = window.setTimeout(() => {
+      controller.abort();
+    }, PAYMENT_REQUEST_TIMEOUT_MS);
+
+    try {
+      const response = await fetch("/api/invoices", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        signal: controller.signal,
+        body: JSON.stringify({
+          action: "add-related-payment-file",
+          invoiceId: paymentInvoice.id,
+          fileData: relatedInfoData,
+          fileName: relatedInfoFileName,
+          fileMimeType: relatedInfoMimeType,
+          fileSize: relatedInfoFileSize,
+        }),
+      });
+
+      const data = (await response.json()) as {
+        message?: string;
+        error?: string;
+      };
+
+      if (!response.ok) {
+        setPaymentModalMessage(data.error ?? "Could not upload related information file.");
+        setMessage(data.error ?? "Could not upload related information file.");
+        return;
+      }
+
+      setPaymentModalMessage(data.message ?? "Related information file uploaded successfully.");
+      setMessage(data.message ?? "Related information file uploaded successfully.");
+      clearSelectedRelatedInfoFile();
+      await fetchInvoices();
+    } catch (error) {
+      const isTimeout =
+        error instanceof DOMException && error.name === "AbortError";
+      const reason = isTimeout
+        ? "Related file upload timed out. Please try again."
+        : "Could not upload related information file.";
+      setPaymentModalMessage(reason);
+      setMessage(reason);
+    } finally {
+      window.clearTimeout(timeoutHandle);
+      setUploadingRelatedInfo(false);
+    }
+  }
+
+  async function removePreviouslyUploadedReceipt() {
+    if (!paymentInvoice?.paymentProof) {
+      return;
+    }
+
+    setRemovingPaymentReceipt(true);
+    setPaymentModalMessage("");
+    setMessage("");
+
+    const controller = new AbortController();
+    const timeoutHandle = window.setTimeout(() => {
+      controller.abort();
+    }, PAYMENT_REQUEST_TIMEOUT_MS);
+
+    try {
+      const response = await fetch("/api/invoices", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        signal: controller.signal,
+        body: JSON.stringify({
+          action: "remove-payment-proof",
+          invoiceId: paymentInvoice.id,
+        }),
+      });
+
+      const data = (await response.json()) as {
+        message?: string;
+        error?: string;
+      };
+
+      if (!response.ok) {
+        setPaymentModalMessage(
+          data.error ?? "Could not delete previously uploaded receipt.",
+        );
+        setMessage(data.error ?? "Could not delete previously uploaded receipt.");
+        return;
+      }
+
+      setPaymentModalMessage("Previously uploaded receipt deleted.");
+      setMessage(data.message ?? "Previously uploaded receipt deleted.");
+      await fetchInvoices();
+    } catch (error) {
+      const isTimeout =
+        error instanceof DOMException && error.name === "AbortError";
+      const reason = isTimeout
+        ? "Delete request timed out. Please try again."
+        : "Could not delete previously uploaded receipt.";
+      setPaymentModalMessage(reason);
+      setMessage(reason);
+    } finally {
+      window.clearTimeout(timeoutHandle);
+      setRemovingPaymentReceipt(false);
+    }
   }
 
   async function submitPaymentReceipt() {
@@ -479,22 +710,32 @@ export default function CustomerInvoicesPage() {
     }
 
     if (!isPaymentMethodEntered) {
+      setPaymentModalMessage("Choose UPI or wire transfer and enter it first.");
       setMessage("Choose UPI or wire transfer and enter it first.");
       return;
     }
 
     if (!paymentReceiptData || !paymentReceiptFileName || !paymentReceiptMimeType) {
+      setPaymentModalMessage("Choose a payment screenshot first. The file picker is opened for you.");
+      openPaymentReceiptPicker();
       setMessage("Upload the payment screenshot before submitting.");
       return;
     }
 
     setSubmittingPaymentReceipt(true);
+    setPaymentModalMessage("");
     setMessage("");
+
+    const controller = new AbortController();
+    const timeoutHandle = window.setTimeout(() => {
+      controller.abort();
+    }, PAYMENT_REQUEST_TIMEOUT_MS);
 
     try {
       const response = await fetch("/api/invoices", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
+        signal: controller.signal,
         body: JSON.stringify({
           action: "submit-payment-proof",
           invoiceId: paymentInvoice.id,
@@ -512,16 +753,25 @@ export default function CustomerInvoicesPage() {
       };
 
       if (!response.ok) {
+        setPaymentModalMessage(data.error ?? "Could not upload payment receipt.");
         setMessage(data.error ?? "Could not upload payment receipt.");
         return;
       }
 
+      setPaymentModalMessage(data.message ?? "Payment receipt uploaded successfully.");
       setMessage(data.message ?? "Payment receipt uploaded successfully.");
       await fetchInvoices();
       closePaymentModal();
-    } catch {
-      setMessage("Could not upload payment receipt.");
+    } catch (error) {
+      const isTimeout =
+        error instanceof DOMException && error.name === "AbortError";
+      const reason = isTimeout
+        ? "Submit request timed out. Please try again."
+        : "Could not upload payment receipt.";
+      setPaymentModalMessage(reason);
+      setMessage(reason);
     } finally {
+      window.clearTimeout(timeoutHandle);
       setSubmittingPaymentReceipt(false);
     }
   }
@@ -543,12 +793,19 @@ export default function CustomerInvoicesPage() {
     return invoices.find((invoice) => invoice.id === paymentInvoiceId) ?? null;
   }, [invoices, paymentInvoiceId]);
 
+  const isPaymentUnderProcessViewOnly =
+    paymentInvoice?.paymentStatus === "submitted" && Boolean(paymentInvoice.paymentProof);
+
   const invoiceTotal = invoices.length;
   const requestTotal = invoices.reduce((acc, curr) => acc + (curr.lineItems?.reduce((sum, item) => sum + (item.usageCount || 0), 0) || 0), 0) || 0;
+  const outstandingInvoices = useMemo(
+    () => invoices.filter((invoice) => invoice.paymentStatus !== "paid"),
+    [invoices],
+  );
 
   const invoiceTotals = useMemo(() => {
     const totals: Record<string, number> = {};
-    invoices.forEach((inv) => {
+    outstandingInvoices.forEach((inv) => {
       buildInvoiceTotalsWithGst(inv).forEach((row) => {
         totals[row.currency] = (totals[row.currency] || 0) + row.total;
       });
@@ -557,7 +814,7 @@ export default function CustomerInvoicesPage() {
     return Object.entries(totals)
       .map(([currency, total]) => ({ currency, total: roundMoney(total) }))
       .sort((first, second) => first.currency.localeCompare(second.currency));
-  }, [invoices]);
+  }, [outstandingInvoices]);
 
   const totalAmountCardSymbol = useMemo(() => {
     if (invoiceTotals.length !== 1) {
@@ -1020,7 +1277,7 @@ export default function CustomerInvoicesPage() {
               filteredInvoices.map((invoice) => {
                 const active = selectedInvoice?.id === invoice.id;
                 const cardTotals = buildInvoiceTotalsWithGst(invoice);
-                const paymentStatusMeta = getPaymentStatusMeta(invoice.paymentStatus);
+                const paymentStatusMeta = getPaymentActionMeta(invoice);
 
                 return (
                   <article
@@ -1083,9 +1340,9 @@ export default function CustomerInvoicesPage() {
                     </div>
 
                     <div style={{ marginTop: "0.2rem" }}>
-                      {invoice.paymentProof ? (
+                      {invoice.paymentStatus === "submitted" && invoice.paymentProof ? (
                         <div style={{ color: "#0F766E", fontSize: "0.76rem", marginBottom: "0.35rem", fontWeight: 600 }}>
-                          Receipt uploaded ({invoice.paymentProof.method === "wireTransfer" ? "Wire Transfer" : "UPI"})
+                          Payment in process ({getPaymentProofMethodLabel(invoice.paymentProof.method)})
                         </div>
                       ) : null}
                       <button
@@ -1690,7 +1947,7 @@ export default function CustomerInvoicesPage() {
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "0.8rem" }}>
               <div>
                 <h3 style={{ margin: 0, color: "#0F172A", fontSize: "1.15rem" }}>
-                  Pay Invoice
+                  {isPaymentUnderProcessViewOnly ? "Payment Status" : "Pay Invoice"}
                 </h3>
                 <p style={{ margin: "0.35rem 0 0", color: "#64748B", fontSize: "0.86rem" }}>
                   {paymentInvoice.invoiceNumber} | {formatBillingMonth(paymentInvoice.billingMonth)}
@@ -1717,81 +1974,310 @@ export default function CustomerInvoicesPage() {
               </button>
             </div>
 
-            <div
-              style={{
-                display: "grid",
-                gap: "0.75rem",
-                gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-              }}
-            >
-              <button
-                type="button"
-                onClick={() => enterPaymentMethod("upi")}
+            {isPaymentUnderProcessViewOnly ? (
+              <div
                 style={{
-                  border:
-                    selectedPaymentMethod === "upi"
-                      ? "2px solid #2563EB"
-                      : "1px solid #CBD5E1",
+                  border: "1px solid #6EE7B7",
                   borderRadius: "12px",
-                  background:
-                    selectedPaymentMethod === "upi" ? "#EFF6FF" : "#FFFFFF",
-                  padding: "0.75rem",
+                  background: "#ECFDF5",
+                  padding: "0.95rem",
                   display: "grid",
-                  gap: "0.35rem",
-                  textAlign: "left",
-                  cursor: "pointer",
+                  gap: "0.6rem",
                 }}
               >
-                <img
-                  src="/images/upi-logo.svg"
-                  alt="UPI Logo"
-                  style={{ width: "130px", height: "40px", objectFit: "contain" }}
-                />
-                <strong style={{ color: "#0F172A" }}>UPI</strong>
-                <span style={{ color: "#64748B", fontSize: "0.82rem" }}>
-                  Pay using UPI ID and QR code.
-                </span>
-                <span style={{ color: "#1D4ED8", fontSize: "0.8rem", fontWeight: 700 }}>
-                  Enter UPI
-                </span>
-              </button>
+                <div style={{ color: "#047857", fontSize: "0.88rem", fontWeight: 800 }}>
+                  Payment Status: Under Process
+                </div>
+                <div style={{ color: "#065F46", fontSize: "0.82rem" }}>
+                  We received your payment proof and will review it shortly.
+                </div>
+                {paymentModalMessage ? (
+                  <div
+                    style={{
+                      border: "1px solid #BFDBFE",
+                      background: "#EFF6FF",
+                      color: "#1E3A8A",
+                      borderRadius: "9px",
+                      fontSize: "0.8rem",
+                      fontWeight: 600,
+                      padding: "0.5rem 0.65rem",
+                    }}
+                  >
+                    {paymentModalMessage}
+                  </div>
+                ) : null}
+                {paymentInvoice.paymentProof ? (
+                  <>
+                    <div style={{ color: "#0F766E", fontSize: "0.8rem" }}>
+                      Method: {getPaymentProofMethodLabel(paymentInvoice.paymentProof.method)}
+                    </div>
+                    <div style={{ color: "#0F766E", fontSize: "0.8rem" }}>
+                      Uploaded: {formatDateTime(paymentInvoice.paymentProof.uploadedAt)}
+                    </div>
+                    <div style={{ color: "#0F766E", fontSize: "0.8rem" }}>
+                      File: {paymentInvoice.paymentProof.screenshotFileName || "Receipt screenshot"}
+                    </div>
+                    <img
+                      src={paymentInvoice.paymentProof.screenshotData}
+                      alt="Uploaded payment receipt"
+                      style={{
+                        width: "min(320px, 100%)",
+                        border: "1px solid #A7F3D0",
+                        borderRadius: "10px",
+                        background: "#FFFFFF",
+                        padding: "0.25rem",
+                        objectFit: "contain",
+                      }}
+                    />
 
-              <button
-                type="button"
-                onClick={() => enterPaymentMethod("wireTransfer")}
-                style={{
-                  border:
-                    selectedPaymentMethod === "wireTransfer"
-                      ? "2px solid #2563EB"
-                      : "1px solid #CBD5E1",
-                  borderRadius: "12px",
-                  background:
-                    selectedPaymentMethod === "wireTransfer"
-                      ? "#EFF6FF"
-                      : "#FFFFFF",
-                  padding: "0.75rem",
-                  display: "grid",
-                  gap: "0.35rem",
-                  textAlign: "left",
-                  cursor: "pointer",
-                }}
-              >
-                <img
-                  src="/images/wire-transfer-logo.svg"
-                  alt="Wire Transfer Logo"
-                  style={{ width: "130px", height: "40px", objectFit: "contain" }}
-                />
-                <strong style={{ color: "#0F172A" }}>Wire Transfer</strong>
-                <span style={{ color: "#64748B", fontSize: "0.82rem" }}>
-                  Pay directly to Cluso bank account.
-                </span>
-                <span style={{ color: "#1D4ED8", fontSize: "0.8rem", fontWeight: 700 }}>
-                  Enter Wire Transfer
-                </span>
-              </button>
-            </div>
+                    {paymentInvoice.paymentProof.relatedFiles.length > 0 ? (
+                      <div
+                        style={{
+                          borderTop: "1px dashed #A7F3D0",
+                          paddingTop: "0.7rem",
+                          display: "grid",
+                          gap: "0.55rem",
+                        }}
+                      >
+                        <div style={{ color: "#047857", fontSize: "0.82rem", fontWeight: 700 }}>
+                          Related Information Files
+                        </div>
+                        <div style={{ display: "grid", gap: "0.6rem" }}>
+                          {paymentInvoice.paymentProof.relatedFiles.map((relatedFile, index) => {
+                            const isImage = relatedFile.fileMimeType.startsWith("image/");
+                            return (
+                              <div
+                                key={`${paymentInvoice.id}-related-file-${index}`}
+                                style={{
+                                  border: "1px solid #A7F3D0",
+                                  borderRadius: "10px",
+                                  background: "#FFFFFF",
+                                  padding: "0.55rem",
+                                  display: "grid",
+                                  gap: "0.45rem",
+                                }}
+                              >
+                                <div style={{ color: "#065F46", fontSize: "0.78rem", fontWeight: 700 }}>
+                                  {relatedFile.fileName || `Related file ${index + 1}`}
+                                </div>
+                                <div style={{ color: "#0F766E", fontSize: "0.75rem" }}>
+                                  Uploaded: {formatDateTime(relatedFile.uploadedAt)}
+                                </div>
+                                <a
+                                  href={relatedFile.fileData}
+                                  download={relatedFile.fileName || `related-file-${index + 1}`}
+                                  style={{
+                                    border: "1px solid #93C5FD",
+                                    background: "#EFF6FF",
+                                    color: "#1D4ED8",
+                                    borderRadius: "8px",
+                                    fontSize: "0.76rem",
+                                    fontWeight: 700,
+                                    padding: "0.32rem 0.55rem",
+                                    textDecoration: "none",
+                                    width: "fit-content",
+                                  }}
+                                >
+                                  Open or Download
+                                </a>
+                                {isImage ? (
+                                  <img
+                                    src={relatedFile.fileData}
+                                    alt={relatedFile.fileName || "Related information file"}
+                                    style={{
+                                      width: "min(220px, 100%)",
+                                      border: "1px solid #CBD5E1",
+                                      borderRadius: "8px",
+                                      background: "#F8FAFC",
+                                      padding: "0.2rem",
+                                      objectFit: "contain",
+                                    }}
+                                  />
+                                ) : null}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    ) : null}
 
-            {!isPaymentMethodEntered ? (
+                    <div
+                      style={{
+                        borderTop: "1px dashed #A7F3D0",
+                        paddingTop: "0.75rem",
+                        display: "grid",
+                        gap: "0.55rem",
+                      }}
+                    >
+                      <div style={{ color: "#047857", fontSize: "0.82rem", fontWeight: 700 }}>
+                        Add Related Information File
+                      </div>
+                      <input
+                        ref={relatedInfoInputRef}
+                        type="file"
+                        accept="image/*,application/pdf"
+                        onChange={(event) => {
+                          void onRelatedInfoFileChange(event);
+                        }}
+                        style={{ fontSize: "0.8rem" }}
+                      />
+
+                      {relatedInfoFileName ? (
+                        <>
+                          <div style={{ color: "#0F766E", fontSize: "0.78rem" }}>
+                            Selected: {relatedInfoFileName}
+                          </div>
+                          <div style={{ display: "flex", gap: "0.45rem", flexWrap: "wrap" }}>
+                            <button
+                              type="button"
+                              onClick={openRelatedInfoPicker}
+                              style={{
+                                border: "1px solid #93C5FD",
+                                background: "#EFF6FF",
+                                color: "#1D4ED8",
+                                borderRadius: "8px",
+                                fontSize: "0.76rem",
+                                fontWeight: 700,
+                                padding: "0.32rem 0.55rem",
+                                cursor: "pointer",
+                              }}
+                            >
+                              Edit Selected File
+                            </button>
+                            <button
+                              type="button"
+                              onClick={clearSelectedRelatedInfoFile}
+                              style={{
+                                border: "1px solid #FCA5A5",
+                                background: "#FEF2F2",
+                                color: "#991B1B",
+                                borderRadius: "8px",
+                                fontSize: "0.76rem",
+                                fontWeight: 700,
+                                padding: "0.32rem 0.55rem",
+                                cursor: "pointer",
+                              }}
+                            >
+                              Delete Selected File
+                            </button>
+                          </div>
+                        </>
+                      ) : null}
+
+                      {relatedInfoData && relatedInfoMimeType.startsWith("image/") ? (
+                        <img
+                          src={relatedInfoData}
+                          alt="Related information preview"
+                          style={{
+                            width: "min(220px, 100%)",
+                            border: "1px solid #CBD5E1",
+                            borderRadius: "8px",
+                            background: "#F8FAFC",
+                            padding: "0.2rem",
+                            objectFit: "contain",
+                          }}
+                        />
+                      ) : null}
+
+                      <button
+                        type="button"
+                        onClick={() => void submitRelatedInfoFile()}
+                        disabled={uploadingRelatedInfo}
+                        style={{
+                          justifySelf: "start",
+                          border: "1px solid #059669",
+                          background: "#059669",
+                          color: "#FFFFFF",
+                          borderRadius: "8px",
+                          fontSize: "0.8rem",
+                          fontWeight: 700,
+                          padding: "0.42rem 0.72rem",
+                          cursor: uploadingRelatedInfo ? "wait" : "pointer",
+                        }}
+                      >
+                        {uploadingRelatedInfo ? "Uploading..." : "Upload Related File"}
+                      </button>
+                    </div>
+                  </>
+                ) : null}
+              </div>
+            ) : (
+              <>
+                <div
+                  style={{
+                    display: "grid",
+                    gap: "0.75rem",
+                    gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+                  }}
+                >
+                  <button
+                    type="button"
+                    onClick={() => enterPaymentMethod("upi")}
+                    style={{
+                      border:
+                        selectedPaymentMethod === "upi"
+                          ? "2px solid #2563EB"
+                          : "1px solid #CBD5E1",
+                      borderRadius: "12px",
+                      background:
+                        selectedPaymentMethod === "upi" ? "#EFF6FF" : "#FFFFFF",
+                      padding: "0.75rem",
+                      display: "grid",
+                      gap: "0.35rem",
+                      textAlign: "left",
+                      cursor: "pointer",
+                    }}
+                  >
+                    <img
+                      src="/images/upi-logo.svg"
+                      alt="UPI Logo"
+                      style={{ width: "130px", height: "40px", objectFit: "contain" }}
+                    />
+                    <strong style={{ color: "#0F172A" }}>UPI</strong>
+                    <span style={{ color: "#64748B", fontSize: "0.82rem" }}>
+                      Pay using UPI ID and QR code.
+                    </span>
+                    <span style={{ color: "#1D4ED8", fontSize: "0.8rem", fontWeight: 700 }}>
+                      Enter UPI
+                    </span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => enterPaymentMethod("wireTransfer")}
+                    style={{
+                      border:
+                        selectedPaymentMethod === "wireTransfer"
+                          ? "2px solid #2563EB"
+                          : "1px solid #CBD5E1",
+                      borderRadius: "12px",
+                      background:
+                        selectedPaymentMethod === "wireTransfer"
+                          ? "#EFF6FF"
+                          : "#FFFFFF",
+                      padding: "0.75rem",
+                      display: "grid",
+                      gap: "0.35rem",
+                      textAlign: "left",
+                      cursor: "pointer",
+                    }}
+                  >
+                    <img
+                      src="/images/wire-transfer-logo.svg"
+                      alt="Wire Transfer Logo"
+                      style={{ width: "130px", height: "40px", objectFit: "contain" }}
+                    />
+                    <strong style={{ color: "#0F172A" }}>Wire Transfer</strong>
+                    <span style={{ color: "#64748B", fontSize: "0.82rem" }}>
+                      Pay directly to Cluso bank account.
+                    </span>
+                    <span style={{ color: "#1D4ED8", fontSize: "0.8rem", fontWeight: 700 }}>
+                      Enter Wire Transfer
+                    </span>
+                  </button>
+                </div>
+
+                {!isPaymentMethodEntered ? (
               <div
                 style={{
                   border: "1px dashed #CBD5E1",
@@ -1804,7 +2290,7 @@ export default function CustomerInvoicesPage() {
               >
                 Choose UPI or Wire Transfer above and enter into it to proceed.
               </div>
-            ) : selectedPaymentMethod === "upi" ? (
+                ) : selectedPaymentMethod === "upi" ? (
               <div
                 style={{
                   border: "1px solid #DBEAFE",
@@ -1899,9 +2385,9 @@ export default function CustomerInvoicesPage() {
                   </div>
                 ))}
               </div>
-            )}
+                )}
 
-            {isPaymentMethodEntered ? (
+                {isPaymentMethodEntered ? (
               <div
                 style={{
                   border: "1px solid #CBD5E1",
@@ -1916,7 +2402,24 @@ export default function CustomerInvoicesPage() {
                   Upload Payment Screenshot
                 </div>
 
+                {paymentModalMessage ? (
+                  <div
+                    style={{
+                      border: "1px solid #BFDBFE",
+                      background: "#EFF6FF",
+                      color: "#1E3A8A",
+                      borderRadius: "9px",
+                      fontSize: "0.8rem",
+                      fontWeight: 600,
+                      padding: "0.5rem 0.65rem",
+                    }}
+                  >
+                    {paymentModalMessage}
+                  </div>
+                ) : null}
+
                 <input
+                  ref={paymentReceiptInputRef}
                   type="file"
                   accept="image/*"
                   onChange={(event) => {
@@ -1926,9 +2429,45 @@ export default function CustomerInvoicesPage() {
                 />
 
                 {paymentReceiptFileName ? (
-                  <div style={{ color: "#475569", fontSize: "0.8rem" }}>
-                    Selected: {paymentReceiptFileName}
-                  </div>
+                  <>
+                    <div style={{ color: "#475569", fontSize: "0.8rem" }}>
+                      Selected: {paymentReceiptFileName}
+                    </div>
+                    <div style={{ display: "flex", gap: "0.45rem", flexWrap: "wrap" }}>
+                      <button
+                        type="button"
+                        onClick={openPaymentReceiptPicker}
+                        style={{
+                          border: "1px solid #93C5FD",
+                          background: "#EFF6FF",
+                          color: "#1D4ED8",
+                          borderRadius: "8px",
+                          fontSize: "0.78rem",
+                          fontWeight: 700,
+                          padding: "0.35rem 0.6rem",
+                          cursor: "pointer",
+                        }}
+                      >
+                        Edit Selected File
+                      </button>
+                      <button
+                        type="button"
+                        onClick={clearSelectedPaymentReceipt}
+                        style={{
+                          border: "1px solid #FCA5A5",
+                          background: "#FEF2F2",
+                          color: "#991B1B",
+                          borderRadius: "8px",
+                          fontSize: "0.78rem",
+                          fontWeight: 700,
+                          padding: "0.35rem 0.6rem",
+                          cursor: "pointer",
+                        }}
+                      >
+                        Delete Selected File
+                      </button>
+                    </div>
+                  </>
                 ) : null}
 
                 {paymentReceiptData ? (
@@ -1952,7 +2491,45 @@ export default function CustomerInvoicesPage() {
                       Previously uploaded receipt
                     </div>
                     <div style={{ color: "#475569", fontSize: "0.78rem" }}>
-                      Method: {paymentInvoice.paymentProof.method === "wireTransfer" ? "Wire Transfer" : "UPI"} | Uploaded: {formatDateTime(paymentInvoice.paymentProof.uploadedAt)}
+                      Method: {getPaymentProofMethodLabel(paymentInvoice.paymentProof.method)} | Uploaded: {formatDateTime(paymentInvoice.paymentProof.uploadedAt)}
+                    </div>
+                    <div style={{ display: "flex", gap: "0.45rem", flexWrap: "wrap" }}>
+                      <button
+                        type="button"
+                        onClick={openPaymentReceiptPicker}
+                        style={{
+                          border: "1px solid #93C5FD",
+                          background: "#EFF6FF",
+                          color: "#1D4ED8",
+                          borderRadius: "8px",
+                          fontSize: "0.78rem",
+                          fontWeight: 700,
+                          padding: "0.35rem 0.6rem",
+                          cursor: "pointer",
+                        }}
+                      >
+                        Edit Receipt
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void removePreviouslyUploadedReceipt()}
+                        disabled={removingPaymentReceipt || submittingPaymentReceipt}
+                        style={{
+                          border: "1px solid #FCA5A5",
+                          background: "#FEF2F2",
+                          color: "#991B1B",
+                          borderRadius: "8px",
+                          fontSize: "0.78rem",
+                          fontWeight: 700,
+                          padding: "0.35rem 0.6rem",
+                          cursor:
+                            removingPaymentReceipt || submittingPaymentReceipt
+                              ? "wait"
+                              : "pointer",
+                        }}
+                      >
+                        {removingPaymentReceipt ? "Deleting..." : "Delete Previous Receipt"}
+                      </button>
                     </div>
                     <img
                       src={paymentInvoice.paymentProof.screenshotData}
@@ -1972,7 +2549,7 @@ export default function CustomerInvoicesPage() {
                 <button
                   type="button"
                   onClick={() => void submitPaymentReceipt()}
-                  disabled={submittingPaymentReceipt}
+                  disabled={submittingPaymentReceipt || removingPaymentReceipt}
                   style={{
                     justifySelf: "start",
                     border: "1px solid #2563EB",
@@ -1982,13 +2559,18 @@ export default function CustomerInvoicesPage() {
                     fontSize: "0.82rem",
                     fontWeight: 700,
                     padding: "0.45rem 0.75rem",
-                    cursor: submittingPaymentReceipt ? "wait" : "pointer",
+                    cursor:
+                      submittingPaymentReceipt || removingPaymentReceipt
+                        ? "wait"
+                        : "pointer",
                   }}
                 >
                   {submittingPaymentReceipt ? "Submitting..." : "Submit Payment Receipt"}
                 </button>
               </div>
-            ) : null}
+                ) : null}
+              </>
+            )}
           </section>
         </div>
       ) : null}
