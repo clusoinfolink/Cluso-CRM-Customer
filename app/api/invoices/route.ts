@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 import { SUPPORTED_CURRENCIES } from "@/lib/currencies";
 import { getCustomerAuthFromRequest } from "@/lib/auth";
 import { connectMongo } from "@/lib/mongodb";
@@ -6,6 +7,10 @@ import Invoice from "@/lib/models/Invoice";
 import type {
   InvoiceCurrencyTotal,
   InvoiceLineItem,
+  InvoicePaymentDetails,
+  InvoicePaymentMethod,
+  InvoicePaymentProof,
+  InvoicePaymentStatus,
   InvoicePartyDetails,
   InvoiceRecord,
   PortalRole,
@@ -13,6 +18,17 @@ import type {
 
 const SUPPORTED_CURRENCY_SET = new Set<string>(SUPPORTED_CURRENCIES);
 const BILLING_MONTH_REGEX = /^\d{4}-(0[1-9]|1[0-2])$/;
+const MAX_PAYMENT_PROOF_BYTES = 5 * 1024 * 1024;
+
+const submitPaymentProofSchema = z.object({
+  action: z.literal("submit-payment-proof"),
+  invoiceId: z.string().min(1),
+  method: z.enum(["upi", "wireTransfer"]),
+  screenshotData: z.string().min(1),
+  screenshotFileName: z.string().min(1),
+  screenshotMimeType: z.string().min(1),
+  screenshotFileSize: z.number().min(1).max(MAX_PAYMENT_PROOF_BYTES),
+});
 
 function asRecord(value: unknown) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -66,6 +82,83 @@ function normalizeGstRate(value: unknown, fallback = 18) {
   }
 
   return Math.round(numeric * 100) / 100;
+}
+
+function normalizeInvoicePaymentStatus(
+  value: unknown,
+  fallback: InvoicePaymentStatus = "unpaid",
+): InvoicePaymentStatus {
+  if (value === "unpaid" || value === "submitted" || value === "paid") {
+    return value;
+  }
+
+  return fallback;
+}
+
+function normalizeInvoicePaymentProof(value: unknown): InvoicePaymentProof | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+
+  const raw = asRecord(value);
+  const methodRaw = asString(raw.method).trim();
+  const method: InvoicePaymentMethod =
+    methodRaw === "wireTransfer" ? "wireTransfer" : "upi";
+  const screenshotData = asString(raw.screenshotData).trim();
+  const screenshotFileName = asString(raw.screenshotFileName).trim();
+  const screenshotMimeType = asString(raw.screenshotMimeType).trim();
+  const screenshotFileSizeRaw = Number(raw.screenshotFileSize);
+  const uploadedAt = new Date(String(raw.uploadedAt ?? ""));
+
+  if (
+    !screenshotData ||
+    !screenshotFileName ||
+    !screenshotMimeType ||
+    Number.isNaN(uploadedAt.getTime())
+  ) {
+    return null;
+  }
+
+  return {
+    method,
+    screenshotData,
+    screenshotFileName,
+    screenshotMimeType,
+    screenshotFileSize:
+      Number.isFinite(screenshotFileSizeRaw) && screenshotFileSizeRaw > 0
+        ? Math.trunc(screenshotFileSizeRaw)
+        : 0,
+    uploadedAt: uploadedAt.toISOString(),
+  };
+}
+
+function normalizeReceiptDataUrl(dataUrl: string) {
+  const trimmedDataUrl = dataUrl.trim();
+  const match = /^data:([^;,]+);base64,(.+)$/i.exec(trimmedDataUrl);
+  if (!match) {
+    return null;
+  }
+
+  const mimeType = match[1].trim().toLowerCase();
+  const base64Payload = match[2].replace(/\s+/g, "");
+  if (!base64Payload) {
+    return null;
+  }
+
+  try {
+    const content = Buffer.from(base64Payload, "base64");
+    if (!content.length) {
+      return null;
+    }
+
+    return {
+      mimeType,
+      byteLength: content.length,
+      normalizedDataUrl: `data:${mimeType};base64,${base64Payload}`,
+    };
+  } catch {
+    return null;
+  }
 }
 
 function getCurrentBillingMonth(date = new Date()) {
@@ -168,6 +261,74 @@ function normalizePartyDetails(value: unknown): InvoicePartyDetails {
   };
 }
 
+const emptyPaymentDetails: InvoicePaymentDetails = {
+  upi: {
+    upiId: "",
+    qrCodeImageUrl: "",
+  },
+  wireTransfer: {
+    accountHolderName: "",
+    accountNumber: "",
+    bankName: "",
+    ifscCode: "",
+    branchName: "",
+    swiftCode: "",
+    instructions: "",
+  },
+};
+
+function normalizeInvoicePaymentDetails(value: unknown): InvoicePaymentDetails {
+  const raw = asRecord(value);
+  const upiRaw = asRecord(raw.upi);
+  const wireTransferRaw = asRecord(raw.wireTransfer);
+
+  return {
+    upi: {
+      upiId: normalizeWhitespace(
+        asString(upiRaw.upiId, emptyPaymentDetails.upi.upiId),
+      ),
+      qrCodeImageUrl: normalizeWhitespace(
+        asString(upiRaw.qrCodeImageUrl, emptyPaymentDetails.upi.qrCodeImageUrl),
+      ),
+    },
+    wireTransfer: {
+      accountHolderName: normalizeWhitespace(
+        asString(
+          wireTransferRaw.accountHolderName,
+          emptyPaymentDetails.wireTransfer.accountHolderName,
+        ),
+      ),
+      accountNumber: normalizeWhitespace(
+        asString(
+          wireTransferRaw.accountNumber,
+          emptyPaymentDetails.wireTransfer.accountNumber,
+        ),
+      ),
+      bankName: normalizeWhitespace(
+        asString(wireTransferRaw.bankName, emptyPaymentDetails.wireTransfer.bankName),
+      ),
+      ifscCode: normalizeWhitespace(
+        asString(wireTransferRaw.ifscCode, emptyPaymentDetails.wireTransfer.ifscCode),
+      ).toUpperCase(),
+      branchName: normalizeWhitespace(
+        asString(
+          wireTransferRaw.branchName,
+          emptyPaymentDetails.wireTransfer.branchName,
+        ),
+      ),
+      swiftCode: normalizeWhitespace(
+        asString(wireTransferRaw.swiftCode, emptyPaymentDetails.wireTransfer.swiftCode),
+      ).toUpperCase(),
+      instructions: normalizeWhitespace(
+        asString(
+          wireTransferRaw.instructions,
+          emptyPaymentDetails.wireTransfer.instructions,
+        ),
+      ),
+    },
+  };
+}
+
 function normalizeLineItems(value: unknown): InvoiceLineItem[] {
   if (!Array.isArray(value)) {
     return [];
@@ -241,6 +402,10 @@ function normalizeInvoiceRecord(doc: Record<string, unknown>): InvoiceRecord {
     customerEmail: asString(doc.customerEmail),
     enterpriseDetails: normalizePartyDetails(doc.enterpriseDetails),
     clusoDetails: normalizePartyDetails(doc.clusoDetails),
+    paymentDetails: normalizeInvoicePaymentDetails(doc.paymentDetails),
+    paymentStatus: normalizeInvoicePaymentStatus(doc.paymentStatus, "unpaid"),
+    paymentProof: normalizeInvoicePaymentProof(doc.paymentProof),
+    paidAt: toIsoDate(doc.paidAt),
     lineItems: normalizeLineItems(doc.lineItems),
     totalsByCurrency: normalizeTotalsByCurrency(doc.totalsByCurrency),
     generatedByName: asString(doc.generatedByName),
@@ -289,6 +454,85 @@ export async function GET(req: NextRequest) {
   return NextResponse.json({
     invoices: invoiceDocs.map((doc) =>
       normalizeInvoiceRecord(doc as unknown as Record<string, unknown>),
+    ),
+  });
+}
+
+export async function PATCH(req: NextRequest) {
+  const auth = await getCustomerAuthFromRequest(req);
+  if (!canAccessInvoices(auth)) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  if (!auth) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const companyId = companyIdFromAuth(auth);
+  if (!companyId) {
+    return NextResponse.json({ error: "Invalid account mapping." }, { status: 400 });
+  }
+
+  const body = await req.json();
+  const parsed = submitPaymentProofSchema.safeParse(body);
+  if (!parsed.success) {
+    return NextResponse.json({ error: "Invalid payment proof payload." }, { status: 400 });
+  }
+
+  const normalizedDataUrlPayload = normalizeReceiptDataUrl(parsed.data.screenshotData);
+  if (!normalizedDataUrlPayload) {
+    return NextResponse.json(
+      { error: "Invalid payment receipt format. Upload a valid file screenshot." },
+      { status: 400 },
+    );
+  }
+
+  if (normalizedDataUrlPayload.byteLength > MAX_PAYMENT_PROOF_BYTES) {
+    return NextResponse.json(
+      { error: "Payment receipt must be 5 MB or smaller." },
+      { status: 400 },
+    );
+  }
+
+  const payloadMimeType = normalizeWhitespace(parsed.data.screenshotMimeType).toLowerCase();
+  const normalizedMimeType = normalizedDataUrlPayload.mimeType;
+  const effectiveMimeType = payloadMimeType || normalizedMimeType;
+
+  if (!effectiveMimeType.startsWith("image/")) {
+    return NextResponse.json(
+      { error: "Only image screenshots are supported for payment receipts." },
+      { status: 400 },
+    );
+  }
+
+  await connectMongo();
+
+  const invoiceDoc = await Invoice.findOne({
+    _id: parsed.data.invoiceId,
+    customer: companyId,
+  });
+
+  if (!invoiceDoc) {
+    return NextResponse.json({ error: "Invoice not found." }, { status: 404 });
+  }
+
+  invoiceDoc.paymentStatus = "submitted";
+  invoiceDoc.paidAt = null;
+  invoiceDoc.paymentProof = {
+    method: parsed.data.method,
+    screenshotData: normalizedDataUrlPayload.normalizedDataUrl,
+    screenshotFileName: normalizeWhitespace(parsed.data.screenshotFileName).slice(0, 160),
+    screenshotMimeType: effectiveMimeType,
+    screenshotFileSize: normalizedDataUrlPayload.byteLength,
+    uploadedAt: new Date(),
+  };
+
+  await invoiceDoc.save();
+
+  return NextResponse.json({
+    message: "Payment receipt uploaded successfully. Awaiting admin confirmation.",
+    invoice: normalizeInvoiceRecord(
+      invoiceDoc.toObject() as unknown as Record<string, unknown>,
     ),
   });
 }

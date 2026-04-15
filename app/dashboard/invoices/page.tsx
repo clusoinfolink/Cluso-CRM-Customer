@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { AreaChart, Download, FileText, ReceiptText, TrendingUp, Calendar, FileSearch, Building, PieChart } from "lucide-react";
+import { AreaChart, Download, FileText, ReceiptText, TrendingUp, Calendar, FileSearch, X } from "lucide-react";
 import { PortalFrame } from "@/components/dashboard/PortalFrame";
 import { BlockCard, BlockTitle } from "@/components/ui/blocks"; 
 import { usePortalSession } from "@/lib/hooks/usePortalSession";
@@ -37,6 +37,38 @@ type MonthSummaryRow = {
   gstAmount: number;
   priceWithGst: number;
 };
+
+type PaymentMethod = "upi" | "wireTransfer";
+
+function getPaymentStatusMeta(status: InvoiceRecord["paymentStatus"]) {
+  if (status === "paid") {
+    return {
+      label: "Paid",
+      background: "#DCFCE7",
+      border: "#86EFAC",
+      color: "#166534",
+      openAllowed: false,
+    };
+  }
+
+  if (status === "submitted") {
+    return {
+      label: "Receipt Uploaded",
+      background: "#FEF3C7",
+      border: "#FDE68A",
+      color: "#92400E",
+      openAllowed: true,
+    };
+  }
+
+  return {
+    label: "Click to Pay",
+    background: "#EFF6FF",
+    border: "#BFDBFE",
+    color: "#1D4ED8",
+    openAllowed: true,
+  };
+}
 
 function clampGstRate(value: number) {
   if (!Number.isFinite(value)) return 0;
@@ -270,6 +302,14 @@ export default function CustomerInvoicesPage() {
   const [selectedBillingMonth, setSelectedBillingMonth] = useState("");
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [selectedInvoiceId, setSelectedInvoiceId] = useState<string | null>(null);
+  const [paymentInvoiceId, setPaymentInvoiceId] = useState<string | null>(null);
+  const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<PaymentMethod>("upi");
+  const [isPaymentMethodEntered, setIsPaymentMethodEntered] = useState(false);
+  const [paymentReceiptData, setPaymentReceiptData] = useState("");
+  const [paymentReceiptFileName, setPaymentReceiptFileName] = useState("");
+  const [paymentReceiptMimeType, setPaymentReceiptMimeType] = useState("");
+  const [paymentReceiptFileSize, setPaymentReceiptFileSize] = useState(0);
+  const [submittingPaymentReceipt, setSubmittingPaymentReceipt] = useState(false);
   const [overviewCardIndex, setOverviewCardIndex] = useState(0);
   const overviewCardRefs = useRef<Array<HTMLDivElement | null>>([]);
 
@@ -351,6 +391,141 @@ export default function CustomerInvoicesPage() {
     }
   }
 
+  function openPaymentModal(invoice: InvoiceRecord) {
+    if (invoice.paymentStatus === "paid") {
+      return;
+    }
+
+    setPaymentInvoiceId(invoice.id);
+    setIsPaymentMethodEntered(false);
+    setPaymentReceiptData("");
+    setPaymentReceiptFileName("");
+    setPaymentReceiptMimeType("");
+    setPaymentReceiptFileSize(0);
+
+    const hasUpiDetails =
+      Boolean(invoice.paymentDetails.upi.upiId) ||
+      Boolean(invoice.paymentDetails.upi.qrCodeImageUrl);
+    const hasWireDetails =
+      Boolean(invoice.paymentDetails.wireTransfer.accountHolderName) ||
+      Boolean(invoice.paymentDetails.wireTransfer.accountNumber) ||
+      Boolean(invoice.paymentDetails.wireTransfer.bankName);
+
+    if (hasUpiDetails || !hasWireDetails) {
+      setSelectedPaymentMethod("upi");
+      return;
+    }
+
+    setSelectedPaymentMethod("wireTransfer");
+  }
+
+  function closePaymentModal() {
+    setPaymentInvoiceId(null);
+    setIsPaymentMethodEntered(false);
+    setPaymentReceiptData("");
+    setPaymentReceiptFileName("");
+    setPaymentReceiptMimeType("");
+    setPaymentReceiptFileSize(0);
+  }
+
+  function enterPaymentMethod(method: PaymentMethod) {
+    setSelectedPaymentMethod(method);
+    setIsPaymentMethodEntered(true);
+  }
+
+  async function onPaymentReceiptFileChange(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) {
+      setPaymentReceiptData("");
+      setPaymentReceiptFileName("");
+      setPaymentReceiptMimeType("");
+      setPaymentReceiptFileSize(0);
+      return;
+    }
+
+    if (!file.type.startsWith("image/")) {
+      setMessage("Please upload an image screenshot for payment receipt.");
+      event.target.value = "";
+      return;
+    }
+
+    if (file.size > 5 * 1024 * 1024) {
+      setMessage("Payment receipt must be 5 MB or smaller.");
+      event.target.value = "";
+      return;
+    }
+
+    const fileData = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result ?? ""));
+      reader.onerror = () => reject(new Error("Could not read the selected file."));
+      reader.readAsDataURL(file);
+    }).catch(() => "");
+
+    if (!fileData) {
+      setMessage("Could not read the selected file.");
+      return;
+    }
+
+    setPaymentReceiptData(fileData);
+    setPaymentReceiptFileName(file.name);
+    setPaymentReceiptMimeType(file.type);
+    setPaymentReceiptFileSize(file.size);
+  }
+
+  async function submitPaymentReceipt() {
+    if (!paymentInvoice) {
+      return;
+    }
+
+    if (!isPaymentMethodEntered) {
+      setMessage("Choose UPI or wire transfer and enter it first.");
+      return;
+    }
+
+    if (!paymentReceiptData || !paymentReceiptFileName || !paymentReceiptMimeType) {
+      setMessage("Upload the payment screenshot before submitting.");
+      return;
+    }
+
+    setSubmittingPaymentReceipt(true);
+    setMessage("");
+
+    try {
+      const response = await fetch("/api/invoices", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "submit-payment-proof",
+          invoiceId: paymentInvoice.id,
+          method: selectedPaymentMethod,
+          screenshotData: paymentReceiptData,
+          screenshotFileName: paymentReceiptFileName,
+          screenshotMimeType: paymentReceiptMimeType,
+          screenshotFileSize: paymentReceiptFileSize,
+        }),
+      });
+
+      const data = (await response.json()) as {
+        message?: string;
+        error?: string;
+      };
+
+      if (!response.ok) {
+        setMessage(data.error ?? "Could not upload payment receipt.");
+        return;
+      }
+
+      setMessage(data.message ?? "Payment receipt uploaded successfully.");
+      await fetchInvoices();
+      closePaymentModal();
+    } catch {
+      setMessage("Could not upload payment receipt.");
+    } finally {
+      setSubmittingPaymentReceipt(false);
+    }
+  }
+
   const filteredInvoices = useMemo(() => {
     if (!selectedBillingMonth) return invoices;
     return invoices.filter((i) => i.billingMonth === selectedBillingMonth);
@@ -359,6 +534,14 @@ export default function CustomerInvoicesPage() {
   const selectedInvoice = useMemo(() => {
     return invoices.find((i) => i.id === selectedInvoiceId) || (filteredInvoices.length > 0 ? filteredInvoices[0] : null);
   }, [invoices, selectedInvoiceId, filteredInvoices]);
+
+  const paymentInvoice = useMemo(() => {
+    if (!paymentInvoiceId) {
+      return null;
+    }
+
+    return invoices.find((invoice) => invoice.id === paymentInvoiceId) ?? null;
+  }, [invoices, paymentInvoiceId]);
 
   const invoiceTotal = invoices.length;
   const requestTotal = invoices.reduce((acc, curr) => acc + (curr.lineItems?.reduce((sum, item) => sum + (item.usageCount || 0), 0) || 0), 0) || 0;
@@ -658,6 +841,21 @@ export default function CustomerInvoicesPage() {
     );
   }, [selectedMonthRequestRows]);
 
+  useEffect(() => {
+    if (!paymentInvoice) {
+      return;
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        closePaymentModal();
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [paymentInvoice]);
+
   if (loading || !me) {
     return (
       <main className="portal-shell">
@@ -822,12 +1020,20 @@ export default function CustomerInvoicesPage() {
               filteredInvoices.map((invoice) => {
                 const active = selectedInvoice?.id === invoice.id;
                 const cardTotals = buildInvoiceTotalsWithGst(invoice);
+                const paymentStatusMeta = getPaymentStatusMeta(invoice.paymentStatus);
 
                 return (
-                  <button
+                  <article
                     key={invoice.id}
-                    type="button"
+                    role="button"
+                    tabIndex={0}
                     onClick={() => setSelectedInvoiceId(invoice.id)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        setSelectedInvoiceId(invoice.id);
+                      }
+                    }}
                     style={{
                       width: "100%",
                       textAlign: "left",
@@ -841,6 +1047,7 @@ export default function CustomerInvoicesPage() {
                       cursor: "pointer",
                       transition: "all 0.2s ease",
                       boxShadow: active ? "0 4px 12px rgba(59, 130, 246, 0.12)" : "0 2px 4px rgba(0,0,0,0.02)",
+                      outline: "none",
                     }}
                   >
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", width: "100%" }}>
@@ -874,7 +1081,36 @@ export default function CustomerInvoicesPage() {
                         </span>
                       ))}
                     </div>
-                  </button>
+
+                    <div style={{ marginTop: "0.2rem" }}>
+                      {invoice.paymentProof ? (
+                        <div style={{ color: "#0F766E", fontSize: "0.76rem", marginBottom: "0.35rem", fontWeight: 600 }}>
+                          Receipt uploaded ({invoice.paymentProof.method === "wireTransfer" ? "Wire Transfer" : "UPI"})
+                        </div>
+                      ) : null}
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          openPaymentModal(invoice);
+                        }}
+                        disabled={!paymentStatusMeta.openAllowed}
+                        style={{
+                          border: `1px solid ${paymentStatusMeta.border}`,
+                          background: paymentStatusMeta.background,
+                          color: paymentStatusMeta.color,
+                          borderRadius: "8px",
+                          fontSize: "0.8rem",
+                          fontWeight: 700,
+                          padding: "0.4rem 0.65rem",
+                          cursor: paymentStatusMeta.openAllowed ? "pointer" : "not-allowed",
+                          opacity: paymentStatusMeta.openAllowed ? 1 : 0.95,
+                        }}
+                      >
+                        {paymentStatusMeta.label}
+                      </button>
+                    </div>
+                  </article>
                 );
               })
             )}
@@ -1417,6 +1653,345 @@ export default function CustomerInvoicesPage() {
           )}
         </div>
       </section>
+
+      {paymentInvoice ? (
+        <div
+          role="presentation"
+          onClick={closePaymentModal}
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(15, 23, 42, 0.45)",
+            zIndex: 110,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: "1rem",
+          }}
+        >
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-label="Invoice payment methods"
+            onClick={(event) => event.stopPropagation()}
+            style={{
+              width: "min(720px, 100%)",
+              maxHeight: "90vh",
+              overflowY: "auto",
+              background: "#FFFFFF",
+              borderRadius: "16px",
+              border: "1px solid #CBD5E1",
+              boxShadow: "0 20px 45px rgba(15, 23, 42, 0.2)",
+              padding: "1rem",
+              display: "grid",
+              gap: "0.95rem",
+            }}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "0.8rem" }}>
+              <div>
+                <h3 style={{ margin: 0, color: "#0F172A", fontSize: "1.15rem" }}>
+                  Pay Invoice
+                </h3>
+                <p style={{ margin: "0.35rem 0 0", color: "#64748B", fontSize: "0.86rem" }}>
+                  {paymentInvoice.invoiceNumber} | {formatBillingMonth(paymentInvoice.billingMonth)}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={closePaymentModal}
+                style={{
+                  width: "32px",
+                  height: "32px",
+                  borderRadius: "999px",
+                  border: "1px solid #CBD5E1",
+                  background: "#FFFFFF",
+                  color: "#475569",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  cursor: "pointer",
+                }}
+                aria-label="Close payment popup"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div
+              style={{
+                display: "grid",
+                gap: "0.75rem",
+                gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+              }}
+            >
+              <button
+                type="button"
+                onClick={() => enterPaymentMethod("upi")}
+                style={{
+                  border:
+                    selectedPaymentMethod === "upi"
+                      ? "2px solid #2563EB"
+                      : "1px solid #CBD5E1",
+                  borderRadius: "12px",
+                  background:
+                    selectedPaymentMethod === "upi" ? "#EFF6FF" : "#FFFFFF",
+                  padding: "0.75rem",
+                  display: "grid",
+                  gap: "0.35rem",
+                  textAlign: "left",
+                  cursor: "pointer",
+                }}
+              >
+                <img
+                  src="/images/upi-logo.svg"
+                  alt="UPI Logo"
+                  style={{ width: "130px", height: "40px", objectFit: "contain" }}
+                />
+                <strong style={{ color: "#0F172A" }}>UPI</strong>
+                <span style={{ color: "#64748B", fontSize: "0.82rem" }}>
+                  Pay using UPI ID and QR code.
+                </span>
+                <span style={{ color: "#1D4ED8", fontSize: "0.8rem", fontWeight: 700 }}>
+                  Enter UPI
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => enterPaymentMethod("wireTransfer")}
+                style={{
+                  border:
+                    selectedPaymentMethod === "wireTransfer"
+                      ? "2px solid #2563EB"
+                      : "1px solid #CBD5E1",
+                  borderRadius: "12px",
+                  background:
+                    selectedPaymentMethod === "wireTransfer"
+                      ? "#EFF6FF"
+                      : "#FFFFFF",
+                  padding: "0.75rem",
+                  display: "grid",
+                  gap: "0.35rem",
+                  textAlign: "left",
+                  cursor: "pointer",
+                }}
+              >
+                <img
+                  src="/images/wire-transfer-logo.svg"
+                  alt="Wire Transfer Logo"
+                  style={{ width: "130px", height: "40px", objectFit: "contain" }}
+                />
+                <strong style={{ color: "#0F172A" }}>Wire Transfer</strong>
+                <span style={{ color: "#64748B", fontSize: "0.82rem" }}>
+                  Pay directly to Cluso bank account.
+                </span>
+                <span style={{ color: "#1D4ED8", fontSize: "0.8rem", fontWeight: 700 }}>
+                  Enter Wire Transfer
+                </span>
+              </button>
+            </div>
+
+            {!isPaymentMethodEntered ? (
+              <div
+                style={{
+                  border: "1px dashed #CBD5E1",
+                  borderRadius: "12px",
+                  padding: "0.95rem",
+                  color: "#475569",
+                  fontSize: "0.86rem",
+                  background: "#F8FAFC",
+                }}
+              >
+                Choose UPI or Wire Transfer above and enter into it to proceed.
+              </div>
+            ) : selectedPaymentMethod === "upi" ? (
+              <div
+                style={{
+                  border: "1px solid #DBEAFE",
+                  borderRadius: "12px",
+                  background: "#F8FBFF",
+                  padding: "0.9rem",
+                  display: "grid",
+                  gap: "0.8rem",
+                }}
+              >
+                <div style={{ color: "#1D4ED8", fontSize: "0.84rem", fontWeight: 700 }}>UPI Payment</div>
+                <div>
+                  <div style={{ color: "#64748B", fontSize: "0.8rem", marginBottom: "0.2rem" }}>
+                    UPI ID
+                  </div>
+                  <div
+                    style={{
+                      border: "1px solid #BFDBFE",
+                      borderRadius: "8px",
+                      background: "#FFFFFF",
+                      padding: "0.5rem 0.65rem",
+                      color: "#0F172A",
+                      fontWeight: 700,
+                      wordBreak: "break-all",
+                    }}
+                  >
+                    {paymentInvoice.paymentDetails.upi.upiId || "Not configured yet."}
+                  </div>
+                </div>
+
+                <div>
+                  <div style={{ color: "#64748B", fontSize: "0.8rem", marginBottom: "0.35rem" }}>
+                    UPI QR Code
+                  </div>
+                  {paymentInvoice.paymentDetails.upi.qrCodeImageUrl ? (
+                    <img
+                      src={paymentInvoice.paymentDetails.upi.qrCodeImageUrl}
+                      alt="UPI QR code"
+                      style={{
+                        width: "min(230px, 100%)",
+                        border: "1px solid #BFDBFE",
+                        borderRadius: "12px",
+                        background: "#FFFFFF",
+                        padding: "0.55rem",
+                        objectFit: "contain",
+                      }}
+                    />
+                  ) : (
+                    <div
+                      style={{
+                        border: "1px dashed #93C5FD",
+                        borderRadius: "12px",
+                        padding: "0.9rem",
+                        color: "#475569",
+                        background: "#FFFFFF",
+                        fontSize: "0.85rem",
+                      }}
+                    >
+                      QR code is not configured yet. Please use wire transfer or contact admin.
+                    </div>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <div
+                style={{
+                  border: "1px solid #DBEAFE",
+                  borderRadius: "12px",
+                  background: "#F8FBFF",
+                  padding: "0.9rem",
+                  display: "grid",
+                  gap: "0.55rem",
+                }}
+              >
+                <div style={{ color: "#1D4ED8", fontSize: "0.84rem", fontWeight: 700 }}>
+                  Wire Transfer Payment
+                </div>
+                {[
+                  ["Account Holder", paymentInvoice.paymentDetails.wireTransfer.accountHolderName],
+                  ["Account Number", paymentInvoice.paymentDetails.wireTransfer.accountNumber],
+                  ["Bank Name", paymentInvoice.paymentDetails.wireTransfer.bankName],
+                  ["IFSC", paymentInvoice.paymentDetails.wireTransfer.ifscCode],
+                  ["Branch", paymentInvoice.paymentDetails.wireTransfer.branchName],
+                  ["SWIFT", paymentInvoice.paymentDetails.wireTransfer.swiftCode],
+                  ["Instructions", paymentInvoice.paymentDetails.wireTransfer.instructions],
+                ].map(([label, value]) => (
+                  <div key={label} style={{ display: "grid", gridTemplateColumns: "155px minmax(0, 1fr)", gap: "0.55rem", alignItems: "start" }}>
+                    <span style={{ color: "#64748B", fontSize: "0.82rem" }}>{label}</span>
+                    <span style={{ color: "#0F172A", fontWeight: 600, wordBreak: "break-word" }}>
+                      {value || "-"}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {isPaymentMethodEntered ? (
+              <div
+                style={{
+                  border: "1px solid #CBD5E1",
+                  borderRadius: "12px",
+                  padding: "0.85rem",
+                  background: "#FFFFFF",
+                  display: "grid",
+                  gap: "0.75rem",
+                }}
+              >
+                <div style={{ color: "#0F172A", fontWeight: 700, fontSize: "0.86rem" }}>
+                  Upload Payment Screenshot
+                </div>
+
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={(event) => {
+                    void onPaymentReceiptFileChange(event);
+                  }}
+                  style={{ fontSize: "0.82rem" }}
+                />
+
+                {paymentReceiptFileName ? (
+                  <div style={{ color: "#475569", fontSize: "0.8rem" }}>
+                    Selected: {paymentReceiptFileName}
+                  </div>
+                ) : null}
+
+                {paymentReceiptData ? (
+                  <img
+                    src={paymentReceiptData}
+                    alt="Payment screenshot preview"
+                    style={{
+                      width: "min(280px, 100%)",
+                      border: "1px solid #CBD5E1",
+                      borderRadius: "10px",
+                      background: "#F8FAFC",
+                      padding: "0.3rem",
+                      objectFit: "contain",
+                    }}
+                  />
+                ) : null}
+
+                {paymentInvoice.paymentProof ? (
+                  <div style={{ borderTop: "1px dashed #CBD5E1", paddingTop: "0.65rem", display: "grid", gap: "0.4rem" }}>
+                    <div style={{ color: "#0F766E", fontSize: "0.8rem", fontWeight: 700 }}>
+                      Previously uploaded receipt
+                    </div>
+                    <div style={{ color: "#475569", fontSize: "0.78rem" }}>
+                      Method: {paymentInvoice.paymentProof.method === "wireTransfer" ? "Wire Transfer" : "UPI"} | Uploaded: {formatDateTime(paymentInvoice.paymentProof.uploadedAt)}
+                    </div>
+                    <img
+                      src={paymentInvoice.paymentProof.screenshotData}
+                      alt="Previously uploaded payment receipt"
+                      style={{
+                        width: "min(220px, 100%)",
+                        border: "1px solid #CBD5E1",
+                        borderRadius: "10px",
+                        background: "#FFFFFF",
+                        padding: "0.25rem",
+                        objectFit: "contain",
+                      }}
+                    />
+                  </div>
+                ) : null}
+
+                <button
+                  type="button"
+                  onClick={() => void submitPaymentReceipt()}
+                  disabled={submittingPaymentReceipt}
+                  style={{
+                    justifySelf: "start",
+                    border: "1px solid #2563EB",
+                    background: "#2563EB",
+                    color: "#FFFFFF",
+                    borderRadius: "8px",
+                    fontSize: "0.82rem",
+                    fontWeight: 700,
+                    padding: "0.45rem 0.75rem",
+                    cursor: submittingPaymentReceipt ? "wait" : "pointer",
+                  }}
+                >
+                  {submittingPaymentReceipt ? "Submitting..." : "Submit Payment Receipt"}
+                </button>
+              </div>
+            ) : null}
+          </section>
+        </div>
+      ) : null}
 
     </PortalFrame>
   );

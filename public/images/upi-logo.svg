@@ -1,0 +1,8 @@
+<svg width="220" height="72" viewBox="0 0 220 72" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect x="1" y="1" width="218" height="70" rx="12" fill="#FFFFFF" stroke="#D1D5DB"/>
+  <g transform="translate(18 17)">
+    <path d="M0 33L20 0H33L13 33H0Z" fill="#F97316"/>
+    <path d="M17 33L37 0H50L30 33H17Z" fill="#16A34A"/>
+  </g>
+  <text x="82" y="45" fill="#1F2937" font-family="Arial, Helvetica, sans-serif" font-size="32" font-weight="700">UPI</text>
+</svg>

@@ -162,6 +162,35 @@ export type InvoicePartyDetails = {
   billingAddress: string;
 };
 
+export type InvoicePaymentDetails = {
+  upi: {
+    upiId: string;
+    qrCodeImageUrl: string;
+  };
+  wireTransfer: {
+    accountHolderName: string;
+    accountNumber: string;
+    bankName: string;
+    ifscCode: string;
+    branchName: string;
+    swiftCode: string;
+    instructions: string;
+  };
+};
+
+export type InvoicePaymentMethod = "upi" | "wireTransfer";
+
+export type InvoicePaymentStatus = "unpaid" | "submitted" | "paid";
+
+export type InvoicePaymentProof = {
+  method: InvoicePaymentMethod;
+  screenshotData: string;
+  screenshotFileName: string;
+  screenshotMimeType: string;
+  screenshotFileSize: number;
+  uploadedAt: string;
+};
+
 export type InvoiceLineItem = {
   serviceId: string;
   serviceName: string;
@@ -187,6 +216,10 @@ export type InvoiceRecord = {
   customerEmail: string;
   enterpriseDetails: InvoicePartyDetails;
   clusoDetails: InvoicePartyDetails;
+  paymentDetails: InvoicePaymentDetails;
+  paymentStatus: InvoicePaymentStatus;
+  paymentProof: InvoicePaymentProof | null;
+  paidAt: string;
   lineItems: InvoiceLineItem[];
   totalsByCurrency: InvoiceCurrencyTotal[];
   generatedByName: string;

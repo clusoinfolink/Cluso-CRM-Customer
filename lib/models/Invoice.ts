@@ -1,6 +1,8 @@
 import { InferSchemaType, Model, Schema, model, models } from "mongoose";
 import { SUPPORTED_CURRENCIES } from "@/lib/currencies";
 
+const INVOICE_PAYMENT_STATUS_VALUES = ["unpaid", "submitted", "paid"] as const;
+
 const InvoicePartyDetailsSchema = new Schema(
   {
     companyName: { type: String, default: "", trim: true },
@@ -33,6 +35,59 @@ const InvoiceCurrencyTotalSchema = new Schema(
   {
     currency: { type: String, enum: SUPPORTED_CURRENCIES, default: "INR" },
     subtotal: { type: Number, required: true, min: 0 },
+  },
+  { _id: false },
+);
+
+const InvoiceUpiDetailsSchema = new Schema(
+  {
+    upiId: { type: String, default: "", trim: true },
+    qrCodeImageUrl: { type: String, default: "", trim: true },
+  },
+  { _id: false },
+);
+
+const InvoiceWireTransferDetailsSchema = new Schema(
+  {
+    accountHolderName: { type: String, default: "", trim: true },
+    accountNumber: { type: String, default: "", trim: true },
+    bankName: { type: String, default: "", trim: true },
+    ifscCode: { type: String, default: "", trim: true },
+    branchName: { type: String, default: "", trim: true },
+    swiftCode: { type: String, default: "", trim: true },
+    instructions: { type: String, default: "", trim: true },
+  },
+  { _id: false },
+);
+
+const InvoicePaymentDetailsSchema = new Schema(
+  {
+    upi: {
+      type: InvoiceUpiDetailsSchema,
+      default: () => ({}),
+      required: true,
+    },
+    wireTransfer: {
+      type: InvoiceWireTransferDetailsSchema,
+      default: () => ({}),
+      required: true,
+    },
+  },
+  { _id: false },
+);
+
+const InvoicePaymentProofSchema = new Schema(
+  {
+    method: {
+      type: String,
+      enum: ["upi", "wireTransfer"],
+      default: "upi",
+    },
+    screenshotData: { type: String, default: "", trim: true },
+    screenshotFileName: { type: String, default: "", trim: true },
+    screenshotMimeType: { type: String, default: "", trim: true },
+    screenshotFileSize: { type: Number, min: 0, default: 0 },
+    uploadedAt: { type: Date, default: null },
   },
   { _id: false },
 );
@@ -80,6 +135,25 @@ const InvoiceSchema = new Schema(
       default: () => ({}),
       required: true,
     },
+    paymentDetails: {
+      type: InvoicePaymentDetailsSchema,
+      default: () => ({}),
+      required: true,
+    },
+    paymentStatus: {
+      type: String,
+      enum: INVOICE_PAYMENT_STATUS_VALUES,
+      default: "unpaid",
+      index: true,
+    },
+    paymentProof: {
+      type: InvoicePaymentProofSchema,
+      default: null,
+    },
+    paidAt: {
+      type: Date,
+      default: null,
+    },
     lineItems: {
       type: [InvoiceLineItemSchema],
       default: [],
@@ -113,6 +187,12 @@ const hasEnterpriseSacCodePath = Boolean(models.Invoice?.schema.path("enterprise
 const hasEnterpriseLtuCodePath = Boolean(models.Invoice?.schema.path("enterpriseDetails.ltuCode"));
 const hasClusoSacCodePath = Boolean(models.Invoice?.schema.path("clusoDetails.sacCode"));
 const hasClusoLtuCodePath = Boolean(models.Invoice?.schema.path("clusoDetails.ltuCode"));
+const hasPaymentDetailsPath = Boolean(models.Invoice?.schema.path("paymentDetails"));
+const hasUpiIdPath = Boolean(models.Invoice?.schema.path("paymentDetails.upi.upiId"));
+const hasWireTransferPath = Boolean(models.Invoice?.schema.path("paymentDetails.wireTransfer.accountNumber"));
+const hasPaymentStatusPath = Boolean(models.Invoice?.schema.path("paymentStatus"));
+const hasPaymentProofPath = Boolean(models.Invoice?.schema.path("paymentProof.screenshotData"));
+const hasPaidAtPath = Boolean(models.Invoice?.schema.path("paidAt"));
 const hasLineItemsPath = Boolean(models.Invoice?.schema.path("lineItems"));
 const hasUsageCountPath = Boolean(models.Invoice?.schema.path("lineItems.usageCount"));
 const hasLineTotalPath = Boolean(models.Invoice?.schema.path("lineItems.lineTotal"));
@@ -130,6 +210,12 @@ if (
     !hasEnterpriseLtuCodePath ||
     !hasClusoSacCodePath ||
     !hasClusoLtuCodePath ||
+    !hasPaymentDetailsPath ||
+    !hasUpiIdPath ||
+    !hasWireTransferPath ||
+    !hasPaymentStatusPath ||
+    !hasPaymentProofPath ||
+    !hasPaidAtPath ||
     !hasLineItemsPath ||
     !hasUsageCountPath ||
     !hasLineTotalPath)
