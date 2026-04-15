@@ -28,9 +28,7 @@ function resolveCustomerPortalUrl() {
     return configuredUrl;
   }
 
-  return process.env.NODE_ENV === "production"
-    ? "https://cluso-crm-customer.vercel.app/"
-    : "http://localhost:3011";
+  return "https://enterprise.secure.cluso.in/";
 }
 
 export async function sendTeamCredentialEmail(

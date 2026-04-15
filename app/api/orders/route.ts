@@ -747,9 +747,7 @@ function resolveCandidatePortalUrl() {
     return configuredUrl;
   }
 
-  return process.env.NODE_ENV === "production"
-    ? "https://cluso-candidates.vercel.app"
-    : "http://localhost:3012";
+  return "https://candidate.secure.cluso.in";
 }
 
 async function sendVerificationRequestEmail(payload: VerificationEmailPayload): Promise<EmailResult> {
@@ -1663,7 +1661,14 @@ export async function PATCH(req: NextRequest) {
         serviceName: string;
         fieldKey: string;
         question: string;
-        fieldType: "text" | "long_text" | "number" | "file" | "date";
+        fieldType:
+          | "text"
+          | "long_text"
+          | "number"
+          | "file"
+          | "date"
+          | "dropdown"
+          | "composite";
       }
     >();
 
@@ -1698,7 +1703,14 @@ export async function PATCH(req: NextRequest) {
         serviceName: string;
         fieldKey: string;
         question: string;
-        fieldType: "text" | "long_text" | "number" | "file" | "date";
+        fieldType:
+          | "text"
+          | "long_text"
+          | "number"
+          | "file"
+          | "date"
+          | "dropdown"
+          | "composite";
       }
     >();
 

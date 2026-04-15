@@ -72,7 +72,6 @@ function getPaymentStatusMeta(status: InvoiceRecord["paymentStatus"]) {
 
   return {
     label: "Click to Pay",
-    background: "#EFF6FF",
     border: "#BFDBFE",
     color: "#1D4ED8",
     openAllowed: true,
@@ -1918,7 +1917,8 @@ export default function CustomerInvoicesPage() {
           style={{
             position: "fixed",
             inset: 0,
-            background: "rgba(15, 23, 42, 0.45)",
+            background: "rgba(2, 6, 23, 0.56)",
+            backdropFilter: "blur(2px)",
             zIndex: 110,
             display: "flex",
             alignItems: "center",
@@ -1932,37 +1932,59 @@ export default function CustomerInvoicesPage() {
             aria-label="Invoice payment methods"
             onClick={(event) => event.stopPropagation()}
             style={{
-              width: "min(720px, 100%)",
+              width: "min(760px, 100%)",
               maxHeight: "90vh",
               overflowY: "auto",
-              background: "#FFFFFF",
-              borderRadius: "16px",
-              border: "1px solid #CBD5E1",
-              boxShadow: "0 20px 45px rgba(15, 23, 42, 0.2)",
-              padding: "1rem",
+              background:
+                "linear-gradient(180deg, #FFFFFF 0%, #FBFDFF 58%, #F7FAFF 100%)",
+              borderRadius: "22px",
+              border: "1px solid #C9D8F8",
+              boxShadow: "0 26px 62px rgba(15, 23, 42, 0.34)",
+              padding: "1.05rem",
               display: "grid",
-              gap: "0.95rem",
+              gap: "1rem",
             }}
           >
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "0.8rem" }}>
-              <div>
-                <h3 style={{ margin: 0, color: "#0F172A", fontSize: "1.15rem" }}>
-                  {isPaymentUnderProcessViewOnly ? "Payment Status" : "Pay Invoice"}
-                </h3>
-                <p style={{ margin: "0.35rem 0 0", color: "#64748B", fontSize: "0.86rem" }}>
-                  {paymentInvoice.invoiceNumber} | {formatBillingMonth(paymentInvoice.billingMonth)}
-                </p>
+              <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+                <div>
+                  <h3 style={{ margin: 0, color: "#0F172A", fontSize: "1.24rem", fontWeight: 800 }}>
+                    {isPaymentUnderProcessViewOnly ? "Payment Status" : "Pay Invoice"}
+                  </h3>
+                  <p style={{ margin: "0.35rem 0 0", color: "#64748B", fontSize: "0.86rem", fontWeight: 600 }}>
+                    {paymentInvoice.invoiceNumber} | {formatBillingMonth(paymentInvoice.billingMonth)}
+                  </p>
+                </div>
+                <div
+                  style={{
+                    background: "#F0FDF4",
+                    border: "1px solid #16A34A",
+                    padding: "0.45rem 0.8rem",
+                    borderRadius: "8px",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: "0.6rem",
+                    width: "fit-content",
+                  }}
+                >
+                  <span style={{ fontSize: "0.82rem", color: "#166534", fontWeight: 700 }}>Amount Due:</span>
+                  <span style={{ fontSize: "1.1rem", color: "#15803D", fontWeight: 900 }}>
+                    {buildInvoiceTotalsWithGst(paymentInvoice)
+                      .map((t) => formatMoney(t.total, t.currency))
+                      .join(" + ")}
+                  </span>
+                </div>
               </div>
               <button
                 type="button"
                 onClick={closePaymentModal}
                 style={{
-                  width: "32px",
-                  height: "32px",
+                  width: "34px",
+                  height: "34px",
                   borderRadius: "999px",
-                  border: "1px solid #CBD5E1",
-                  background: "#FFFFFF",
-                  color: "#475569",
+                  border: "1px solid #B7CCE8",
+                  background: "#F8FBFF",
+                  color: "#3C556E",
                   display: "inline-flex",
                   alignItems: "center",
                   justifyContent: "center",
@@ -1972,6 +1994,27 @@ export default function CustomerInvoicesPage() {
               >
                 <X size={16} />
               </button>
+            </div>
+
+            <div
+              style={{
+                border: "1px solid #D7E3F7",
+                borderRadius: "12px",
+                background: "linear-gradient(135deg, #EFF6FF 0%, #E8F3FF 100%)",
+                padding: "0.68rem 0.78rem",
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                gap: "0.7rem",
+                flexWrap: "wrap",
+              }}
+            >
+              <span style={{ color: "#1D4ED8", fontSize: "0.78rem", fontWeight: 800 }}>
+                Secure payment window
+              </span>
+              <span style={{ color: "#334155", fontSize: "0.76rem", fontWeight: 600 }}>
+                Share clear receipt proof for faster verification.
+              </span>
             </div>
 
             {isPaymentUnderProcessViewOnly ? (
@@ -2112,6 +2155,9 @@ export default function CustomerInvoicesPage() {
                       <div style={{ color: "#047857", fontSize: "0.82rem", fontWeight: 700 }}>
                         Add Related Information File
                       </div>
+                      <div style={{ color: "#0F766E", fontSize: "0.76rem", fontWeight: 600 }}>
+                        Accepted: image or PDF, up to 5 MB.
+                      </div>
                       <input
                         ref={relatedInfoInputRef}
                         type="file"
@@ -2119,8 +2165,31 @@ export default function CustomerInvoicesPage() {
                         onChange={(event) => {
                           void onRelatedInfoFileChange(event);
                         }}
-                        style={{ fontSize: "0.8rem" }}
+                        style={{ display: "none" }}
                       />
+
+                      <div style={{ display: "flex", gap: "0.45rem", flexWrap: "wrap", alignItems: "center" }}>
+                        <button
+                          type="button"
+                          onClick={openRelatedInfoPicker}
+                          style={{
+                            border: "1px solid #059669",
+                            background: "linear-gradient(135deg, #10B981 0%, #059669 100%)",
+                            color: "#FFFFFF",
+                            borderRadius: "8px",
+                            fontSize: "0.78rem",
+                            fontWeight: 800,
+                            padding: "0.36rem 0.62rem",
+                            cursor: "pointer",
+                            boxShadow: "0 8px 16px rgba(5, 150, 105, 0.2)",
+                          }}
+                        >
+                          {relatedInfoFileName ? "Choose Another File" : "Choose Related File"}
+                        </button>
+                        <span style={{ color: "#0F766E", fontSize: "0.76rem", fontWeight: 600 }}>
+                          {relatedInfoFileName || "No file selected"}
+                        </span>
+                      </div>
 
                       {relatedInfoFileName ? (
                         <>
@@ -2206,7 +2275,7 @@ export default function CustomerInvoicesPage() {
                 <div
                   style={{
                     display: "grid",
-                    gap: "0.75rem",
+                    gap: "0.8rem",
                     gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
                   }}
                 >
@@ -2216,24 +2285,36 @@ export default function CustomerInvoicesPage() {
                     style={{
                       border:
                         selectedPaymentMethod === "upi"
-                          ? "2px solid #2563EB"
-                          : "1px solid #CBD5E1",
-                      borderRadius: "12px",
+                          ? "2px solid #1D4ED8"
+                          : "1px solid #CFD8E7",
+                      borderRadius: "14px",
                       background:
-                        selectedPaymentMethod === "upi" ? "#EFF6FF" : "#FFFFFF",
-                      padding: "0.75rem",
+                        selectedPaymentMethod === "upi"
+                          ? "linear-gradient(135deg, #F1F7FF 0%, #E9F3FF 100%)"
+                          : "#FFFFFF",
+                      padding: "1.25rem",
                       display: "grid",
-                      gap: "0.35rem",
+                      gap: "0.42rem",
                       textAlign: "left",
                       cursor: "pointer",
+                      boxShadow:
+                        selectedPaymentMethod === "upi"
+                          ? "0 10px 22px rgba(37, 99, 235, 0.14)"
+                          : "0 6px 14px rgba(15, 23, 42, 0.06)",
+                      position: "relative",
                     }}
                   >
+                    {selectedPaymentMethod === "upi" ? (
+                      <div style={{ position: "absolute", top: "12px", right: "12px", background: "#1D4ED8", borderRadius: "50%", width: "20px", height: "20px", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                      </div>
+                    ) : null}
                     <img
-                      src="/images/upi-logo.svg"
-                      alt="UPI Logo"
-                      style={{ width: "130px", height: "40px", objectFit: "contain" }}
+                      src="/images/upi-icon.webp"
+                      alt="UPI official logo"
+                      style={{ width: "min(280px, 100%)", height: "110px", objectFit: "contain", alignSelf: "center", justifySelf: "center" }}
                     />
-                    <strong style={{ color: "#0F172A" }}>UPI</strong>
+                    <strong style={{ color: "#0F172A", marginTop: "0.4rem" }}>UPI</strong>
                     <span style={{ color: "#64748B", fontSize: "0.82rem" }}>
                       Pay using UPI ID and QR code.
                     </span>
@@ -2248,26 +2329,36 @@ export default function CustomerInvoicesPage() {
                     style={{
                       border:
                         selectedPaymentMethod === "wireTransfer"
-                          ? "2px solid #2563EB"
-                          : "1px solid #CBD5E1",
-                      borderRadius: "12px",
+                          ? "2px solid #1D4ED8"
+                          : "1px solid #CFD8E7",
+                      borderRadius: "14px",
                       background:
                         selectedPaymentMethod === "wireTransfer"
-                          ? "#EFF6FF"
+                          ? "linear-gradient(135deg, #F1F7FF 0%, #E9F3FF 100%)"
                           : "#FFFFFF",
-                      padding: "0.75rem",
+                      padding: "1.25rem",
                       display: "grid",
-                      gap: "0.35rem",
+                      gap: "0.42rem",
                       textAlign: "left",
                       cursor: "pointer",
+                      boxShadow:
+                        selectedPaymentMethod === "wireTransfer"
+                          ? "0 10px 22px rgba(37, 99, 235, 0.14)"
+                          : "0 6px 14px rgba(15, 23, 42, 0.06)",
+                      position: "relative",
                     }}
                   >
+                    {selectedPaymentMethod === "wireTransfer" ? (
+                      <div style={{ position: "absolute", top: "12px", right: "12px", background: "#1D4ED8", borderRadius: "50%", width: "20px", height: "20px", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                      </div>
+                    ) : null}
                     <img
                       src="/images/wire-transfer-logo.svg"
                       alt="Wire Transfer Logo"
-                      style={{ width: "130px", height: "40px", objectFit: "contain" }}
+                      style={{ width: "210px", height: "70px", objectFit: "contain", alignSelf: "center", justifySelf: "center", marginTop: "20px", marginBottom: "20px" }}
                     />
-                    <strong style={{ color: "#0F172A" }}>Wire Transfer</strong>
+                    <strong style={{ color: "#0F172A", marginTop: "0.4rem" }}>Wire Transfer</strong>
                     <span style={{ color: "#64748B", fontSize: "0.82rem" }}>
                       Pay directly to Cluso bank account.
                     </span>
@@ -2390,16 +2481,20 @@ export default function CustomerInvoicesPage() {
                 {isPaymentMethodEntered ? (
               <div
                 style={{
-                  border: "1px solid #CBD5E1",
-                  borderRadius: "12px",
-                  padding: "0.85rem",
-                  background: "#FFFFFF",
+                  border: "1px solid #C7D5EB",
+                  borderRadius: "14px",
+                  padding: "0.95rem",
+                  background: "linear-gradient(180deg, #FFFFFF 0%, #F9FBFF 100%)",
                   display: "grid",
-                  gap: "0.75rem",
+                  gap: "0.8rem",
                 }}
               >
-                <div style={{ color: "#0F172A", fontWeight: 700, fontSize: "0.86rem" }}>
+                <div style={{ color: "#0F172A", fontWeight: 800, fontSize: "0.9rem" }}>
                   Upload Payment Screenshot
+                </div>
+
+                <div style={{ color: "#64748B", fontSize: "0.77rem", fontWeight: 600 }}>
+                  Accepted: JPG/PNG image up to 5 MB. Ensure amount and transaction details are clearly visible.
                 </div>
 
                 {paymentModalMessage ? (
@@ -2425,8 +2520,31 @@ export default function CustomerInvoicesPage() {
                   onChange={(event) => {
                     void onPaymentReceiptFileChange(event);
                   }}
-                  style={{ fontSize: "0.82rem" }}
+                  style={{ display: "none" }}
                 />
+
+                <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", alignItems: "center" }}>
+                  <button
+                    type="button"
+                    onClick={openPaymentReceiptPicker}
+                    style={{
+                      border: "1px solid #1D4ED8",
+                      background: "linear-gradient(135deg, #2563EB 0%, #1D4ED8 100%)",
+                      color: "#FFFFFF",
+                      borderRadius: "9px",
+                      fontSize: "0.82rem",
+                      fontWeight: 800,
+                      padding: "0.46rem 0.78rem",
+                      cursor: "pointer",
+                      boxShadow: "0 8px 18px rgba(37, 99, 235, 0.22)",
+                    }}
+                  >
+                    {paymentReceiptFileName ? "Choose Another Screenshot" : "Choose Screenshot File"}
+                  </button>
+                  <span style={{ color: "#475569", fontSize: "0.79rem", fontWeight: 600 }}>
+                    {paymentReceiptFileName || "No file selected"}
+                  </span>
+                </div>
 
                 {paymentReceiptFileName ? (
                   <>

@@ -1,8 +1,34 @@
-<svg width="220" height="72" viewBox="0 0 220 72" fill="none" xmlns="http://www.w3.org/2000/svg">
-  <rect x="1" y="1" width="218" height="70" rx="12" fill="#FFFFFF" stroke="#D1D5DB"/>
-  <g transform="translate(18 17)">
-    <path d="M0 33L20 0H33L13 33H0Z" fill="#F97316"/>
-    <path d="M17 33L37 0H50L30 33H17Z" fill="#16A34A"/>
+<svg width="360" height="120" viewBox="0 0 360 120" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect x="5" y="5" width="350" height="110" rx="28" fill="#05070D" stroke="#D1D5DB" stroke-width="6"/>
+
+  <text
+    x="78"
+    y="70"
+    fill="#E5E7EB"
+    font-family="Arial Black, Arial, Helvetica, sans-serif"
+    font-size="62"
+    font-style="italic"
+    font-weight="900"
+    letter-spacing="1"
+  >
+    UPI
+  </text>
+
+  <g transform="translate(236 34)">
+    <path d="M0 45L28 0H46L18 45H0Z" fill="#F59E0B"/>
+    <path d="M17 45L45 0H63L35 45H17Z" fill="#16A34A"/>
   </g>
-  <text x="82" y="45" fill="#1F2937" font-family="Arial, Helvetica, sans-serif" font-size="32" font-weight="700">UPI</text>
+
+  <text
+    x="76"
+    y="90"
+    fill="#9CA3AF"
+    font-family="Arial, Helvetica, sans-serif"
+    font-size="14"
+    font-style="italic"
+    font-weight="700"
+    letter-spacing="0.8"
+  >
+    UNIFIED PAYMENTS INTERFACE
+  </text>
 </svg>
