@@ -146,6 +146,13 @@ const UserSchema = new Schema(
         serviceName: { type: String, required: true },
         price: { type: Number, required: true },
         currency: { type: String, enum: SUPPORTED_CURRENCIES, default: "INR" },
+        countryRates: [
+          {
+            country: { type: String, required: true, trim: true },
+            price: { type: Number, required: true, min: 0 },
+            currency: { type: String, enum: SUPPORTED_CURRENCIES, required: true },
+          },
+        ],
       },
     ],
     partnerProfile: {
@@ -177,6 +184,7 @@ const hasDeactivationReasonPath = Boolean(models.User?.schema.path("deactivation
 const hasAccessRoleHistoryPath = Boolean(models.User?.schema.path("accessRoleHistory"));
 const hasPartnerProfilePath = Boolean(models.User?.schema.path("partnerProfile"));
 const hasCompanyAccessStatusPath = Boolean(models.User?.schema.path("companyAccessStatus"));
+const hasCountryRatesPath = Boolean(models.User?.schema.path("selectedServices.countryRates"));
 
 if (
   models.User &&
@@ -191,7 +199,8 @@ if (
     !hasDeactivationReasonPath ||
     !hasAccessRoleHistoryPath ||
     !hasPartnerProfilePath ||
-    !hasCompanyAccessStatusPath)
+    !hasCompanyAccessStatusPath ||
+    !hasCountryRatesPath)
 ) {
   delete models.User;
 }

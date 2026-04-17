@@ -8,12 +8,66 @@ import { getAlertTone } from "@/lib/alerts";
 import { usePortalSession } from "@/lib/hooks/usePortalSession";
 
 const OBJECT_ID_PATTERN = /^[a-f\d]{24}$/i;
+const VERIFICATION_COUNTRY_OPTIONS = [
+  "Afghanistan",
+  "Armenia",
+  "Australia",
+  "Azerbaijan",
+  "Bangladesh",
+  "Bhutan",
+  "Brunei",
+  "Cambodia",
+  "China",
+  "Fiji",
+  "Georgia",
+  "Hong Kong",
+  "India",
+  "Indonesia",
+  "Japan",
+  "Kazakhstan",
+  "Kiribati",
+  "Kyrgyzstan",
+  "Laos",
+  "Macau",
+  "Malaysia",
+  "Maldives",
+  "Marshall Islands",
+  "Micronesia",
+  "Mongolia",
+  "Myanmar",
+  "Nauru",
+  "Nepal",
+  "New Zealand",
+  "Pakistan",
+  "Palau",
+  "Papua New Guinea",
+  "Philippines",
+  "Samoa",
+  "Singapore",
+  "Solomon Islands",
+  "South Korea",
+  "Sri Lanka",
+  "Taiwan",
+  "Tajikistan",
+  "Thailand",
+  "Timor-Leste",
+  "Tonga",
+  "Turkmenistan",
+  "Tuvalu",
+  "Uzbekistan",
+  "Vanuatu",
+  "Vietnam",
+  "United Arab Emirates",
+  "United States",
+  "United Kingdom",
+];
 
 export default function OrdersPage() {
   const { me, loading, logout } = usePortalSession();
   const [candidateName, setCandidateName] = useState("");
   const [candidateEmail, setCandidateEmail] = useState("");
   const [candidatePhone, setCandidatePhone] = useState("");
+  const [verificationCountry, setVerificationCountry] = useState(VERIFICATION_COUNTRY_OPTIONS[0]);
   const [selectedServiceIds, setSelectedServiceIds] = useState<string[]>([]);
   const [serviceConfigs, setServiceConfigs] = useState<Record<string, string>>({});
   const [serviceSearch, setServiceSearch] = useState("");
@@ -139,6 +193,7 @@ export default function OrdersPage() {
         candidateName, 
         candidateEmail, 
         candidatePhone, 
+        verificationCountry,
         selectedServiceIds,
         serviceConfigs 
       }),
@@ -215,6 +270,25 @@ export default function OrdersPage() {
                 onChange={(e) => setCandidateEmail(e.target.value)}
                 required
               />
+            </div>
+
+            <div>
+              <label className="label" htmlFor="verification-country">
+                Verification Country
+              </label>
+              <select
+                id="verification-country"
+                className="input"
+                value={verificationCountry}
+                onChange={(e) => setVerificationCountry(e.target.value)}
+                required
+              >
+                {VERIFICATION_COUNTRY_OPTIONS.map((country) => (
+                  <option key={country} value={country}>
+                    {country}
+                  </option>
+                ))}
+              </select>
             </div>
 
             {visibleServices.length ? (

@@ -6,6 +6,7 @@ const VerificationRequestSchema = new Schema(
     candidateName: { type: String, required: true },
     candidateEmail: { type: String, default: "" },
     candidatePhone: { type: String, default: "" },
+    verificationCountry: { type: String, default: "", trim: true },
     customer: {
       type: Schema.Types.ObjectId,
       ref: "User",
@@ -311,6 +312,7 @@ if (
     !models.VerificationRequest.schema.path("candidateFormResponses.answers.repeatable") ||
     !models.VerificationRequest.schema.path("enterpriseApprovedAt") ||
     !models.VerificationRequest.schema.path("enterpriseDecisionLockedAt") ||
+    !models.VerificationRequest.schema.path("verificationCountry") ||
     !models.VerificationRequest.schema.path("serviceVerifications") ||
     !models.VerificationRequest.schema.path("serviceVerifications.attempts.screenshotData") ||
     !models.VerificationRequest.schema.path("serviceVerifications.attempts.verifierNote") ||

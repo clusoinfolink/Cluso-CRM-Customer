@@ -15,9 +15,16 @@ export type PortalAvailableService = {
   serviceName: string;
   price: number;
   currency: SupportedCurrency;
+  countryRates?: CountrySpecificRate[];
   isPackage: boolean;
   includedServiceIds?: string[];
   includedServiceNames?: string[];
+};
+
+export type CountrySpecificRate = {
+  country: string;
+  price: number;
+  currency: SupportedCurrency;
 };
 
 export type PortalUser = {
@@ -111,6 +118,7 @@ export type RequestItem = {
   candidatePhone: string;
   verifierNames?: string[];
   createdByName?: string;
+  verificationCountry?: string;
   createdByRole?: string;
   delegateName?: string;
   status: RequestStatus;
@@ -209,6 +217,7 @@ export type ServiceFormField = {
   forceUppercase?: boolean;
   allowNotApplicable?: boolean;
   notApplicableText?: string;
+  copyFromPersonalDetailsFieldKey?: string;
 };
 
 export type ServiceItem = {
@@ -231,6 +240,7 @@ export type CompanyServiceSelection = {
   serviceName: string;
   price: number;
   currency: SupportedCurrency;
+  countryRates?: CountrySpecificRate[];
   yearsOfChecking?: string;
 };
 

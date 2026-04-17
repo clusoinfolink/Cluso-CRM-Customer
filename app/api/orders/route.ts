@@ -4,7 +4,7 @@ import crypto from "node:crypto";
 import nodemailer from "nodemailer";
 import { z } from "zod";
 import { getCustomerAuthFromRequest } from "@/lib/auth";
-import { type SupportedCurrency } from "@/lib/currencies";
+import { SUPPORTED_CURRENCIES, type SupportedCurrency } from "@/lib/currencies";
 import { connectMongo } from "@/lib/mongodb";
 import Service from "@/lib/models/Service";
 import User from "@/lib/models/User";
@@ -14,6 +14,7 @@ const schema = z.object({
   candidateName: z.string().min(2),
   candidateEmail: z.string().email(),
   candidatePhone: z.string().optional().default(""),
+  verificationCountry: z.string().trim().optional().default(""),
   selectedServiceIds: z.array(z.string().min(1)).optional().default([]),
   serviceConfigs: z.record(z.string(), z.string()).optional().default({}),
 });
@@ -23,6 +24,7 @@ const updateSchema = z.object({
   candidateName: z.string().min(2),
   candidateEmail: z.string().email(),
   candidatePhone: z.string().optional().default(""),
+  verificationCountry: z.string().trim().optional().default(""),
   selectedServiceIds: z.array(z.string().min(1)).optional().default([]),
 });
 
@@ -109,6 +111,32 @@ const DEFAULT_PERSONAL_DETAILS_FORM_FIELDS = [
     notApplicableText: "",
   },
   {
+    fieldKey: "personal_email_address",
+    question: "Email address",
+    iconKey: "email",
+    fieldType: "text",
+    required: true,
+    repeatable: false,
+    minLength: 5,
+    maxLength: 160,
+    forceUppercase: false,
+    allowNotApplicable: false,
+    notApplicableText: "",
+  },
+  {
+    fieldKey: "personal_nationality",
+    question: "Nationality",
+    iconKey: "global",
+    fieldType: "text",
+    required: true,
+    repeatable: false,
+    minLength: 2,
+    maxLength: 80,
+    forceUppercase: false,
+    allowNotApplicable: false,
+    notApplicableText: "",
+  },
+  {
     fieldKey: "personal_residential_address",
     question: "Current residential address",
     iconKey: "house",
@@ -120,6 +148,20 @@ const DEFAULT_PERSONAL_DETAILS_FORM_FIELDS = [
     forceUppercase: false,
     allowNotApplicable: false,
     notApplicableText: "",
+  },
+  {
+    fieldKey: "personal_gender",
+    question: "Gender",
+    iconKey: "person",
+    fieldType: "dropdown",
+    required: true,
+    repeatable: false,
+    minLength: null,
+    maxLength: null,
+    forceUppercase: false,
+    allowNotApplicable: false,
+    notApplicableText: "",
+    dropdownOptions: ["Male", "Female", "Non-binary", "Prefer not to say"],
   },
   {
     fieldKey: "personal_primary_id_number",
@@ -135,6 +177,32 @@ const DEFAULT_PERSONAL_DETAILS_FORM_FIELDS = [
     notApplicableText: "",
   },
 ];
+
+function mergePersonalDetailsFormFields(existingFormFields: unknown) {
+  if (!Array.isArray(existingFormFields) || existingFormFields.length === 0) {
+    return DEFAULT_PERSONAL_DETAILS_FORM_FIELDS;
+  }
+
+  const existingFieldKeys = new Set(
+    existingFormFields
+      .filter(
+        (field): field is { fieldKey?: unknown } =>
+          Boolean(field) && typeof field === "object",
+      )
+      .map((field) => String(field.fieldKey ?? "").trim())
+      .filter(Boolean),
+  );
+
+  const missingDefaultFields = DEFAULT_PERSONAL_DETAILS_FORM_FIELDS.filter(
+    (field) => !existingFieldKeys.has(field.fieldKey),
+  );
+
+  if (missingDefaultFields.length === 0) {
+    return existingFormFields;
+  }
+
+  return [...existingFormFields, ...missingDefaultFields];
+}
 
 function isHiddenService(service: {
   hiddenFromCustomerPortal?: unknown;
@@ -154,6 +222,10 @@ function normalizeDateValue(value: unknown) {
   }
 
   return parsedDate;
+}
+
+function normalizeCountryName(value: unknown) {
+  return String(value ?? "").trim().replace(/\s+/g, " ");
 }
 
 function normalizeAttachmentFileName(input: string, fallback: string) {
@@ -429,6 +501,11 @@ type CompanyServiceSelection = {
   serviceName: string;
   price: number;
   currency: SupportedCurrency;
+  countryRates: Array<{
+    country: string;
+    price: number;
+    currency: SupportedCurrency;
+  }>;
   isPackage: boolean;
   includedServiceIds: string[];
   hiddenFromCustomerPortal: boolean;
@@ -446,6 +523,83 @@ type PersonalDetailsService = {
   serviceName: string;
   currency: SupportedCurrency;
 };
+
+function normalizeCountryRates(
+  value: unknown,
+  fallbackCurrency: SupportedCurrency,
+): CompanyServiceSelection["countryRates"] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  const deduped = new Map<string, CompanyServiceSelection["countryRates"][number]>();
+
+  for (const entry of value) {
+    const raw = entry && typeof entry === "object" ? (entry as Record<string, unknown>) : null;
+    if (!raw) {
+      continue;
+    }
+
+    const country = normalizeCountryName(raw.country);
+    const price = Number(raw.price);
+    const currencyCandidate = String(raw.currency ?? "") as SupportedCurrency;
+    const currency =
+      currencyCandidate &&
+      SUPPORTED_CURRENCIES.includes(currencyCandidate)
+        ? currencyCandidate
+        : fallbackCurrency;
+
+    if (!country || !Number.isFinite(price) || price < 0) {
+      continue;
+    }
+
+    deduped.set(country.toLowerCase(), {
+      country,
+      price,
+      currency,
+    });
+  }
+
+  return [...deduped.values()];
+}
+
+function resolveCountryRateForService(
+  service: Pick<CompanyServiceSelection, "price" | "currency" | "countryRates">,
+  verificationCountry: string,
+  companyCountry: string,
+) {
+  const normalizedVerificationCountry = normalizeCountryName(verificationCountry).toLowerCase();
+  const normalizedCompanyCountry = normalizeCountryName(companyCountry).toLowerCase();
+
+  if (normalizedVerificationCountry) {
+    const requestedRate = service.countryRates.find(
+      (rate) => normalizeCountryName(rate.country).toLowerCase() === normalizedVerificationCountry,
+    );
+    if (requestedRate) {
+      return {
+        price: requestedRate.price,
+        currency: requestedRate.currency,
+      };
+    }
+  }
+
+  if (normalizedCompanyCountry) {
+    const fallbackRate = service.countryRates.find(
+      (rate) => normalizeCountryName(rate.country).toLowerCase() === normalizedCompanyCountry,
+    );
+    if (fallbackRate) {
+      return {
+        price: fallbackRate.price,
+        currency: fallbackRate.currency,
+      };
+    }
+  }
+
+  return {
+    price: service.price,
+    currency: service.currency,
+  };
+}
 
 function toPersonalDetailsService(service: {
   _id: unknown;
@@ -467,15 +621,20 @@ async function ensureDefaultPersonalDetailsService(): Promise<PersonalDetailsSer
     .lean();
 
   if (existingDefault) {
+    const mergedFormFields = mergePersonalDetailsFormFields(existingDefault.formFields);
     const shouldSeedDefaultFields =
       !Array.isArray(existingDefault.formFields) || existingDefault.formFields.length === 0;
+    const shouldBackfillDefaultFields =
+      Array.isArray(existingDefault.formFields) &&
+      mergedFormFields.length !== existingDefault.formFields.length;
 
     if (
       !isHiddenService(existingDefault) ||
       Boolean(existingDefault.isPackage) ||
       Number(existingDefault.defaultPrice ?? 0) !== 0 ||
       (existingDefault.includedServiceIds ?? []).length > 0 ||
-      shouldSeedDefaultFields
+      shouldSeedDefaultFields ||
+      shouldBackfillDefaultFields
     ) {
       await Service.findByIdAndUpdate(existingDefault._id, {
         hiddenFromCustomerPortal: true,
@@ -483,9 +642,9 @@ async function ensureDefaultPersonalDetailsService(): Promise<PersonalDetailsSer
         isPackage: false,
         includedServiceIds: [],
         defaultPrice: 0,
-        ...(shouldSeedDefaultFields
+        ...(shouldSeedDefaultFields || shouldBackfillDefaultFields
           ? {
-              formFields: DEFAULT_PERSONAL_DETAILS_FORM_FIELDS,
+              formFields: mergedFormFields,
             }
           : {}),
       });
@@ -501,8 +660,12 @@ async function ensureDefaultPersonalDetailsService(): Promise<PersonalDetailsSer
     .lean();
 
   if (existingByName) {
+    const mergedFormFields = mergePersonalDetailsFormFields(existingByName.formFields);
     const shouldSeedDefaultFields =
       !Array.isArray(existingByName.formFields) || existingByName.formFields.length === 0;
+    const shouldBackfillDefaultFields =
+      Array.isArray(existingByName.formFields) &&
+      mergedFormFields.length !== existingByName.formFields.length;
 
     await Service.findByIdAndUpdate(existingByName._id, {
       hiddenFromCustomerPortal: true,
@@ -510,9 +673,9 @@ async function ensureDefaultPersonalDetailsService(): Promise<PersonalDetailsSer
       isPackage: false,
       includedServiceIds: [],
       defaultPrice: 0,
-      ...(shouldSeedDefaultFields
+      ...(shouldSeedDefaultFields || shouldBackfillDefaultFields
         ? {
-            formFields: DEFAULT_PERSONAL_DETAILS_FORM_FIELDS,
+            formFields: mergedFormFields,
           }
         : {}),
     });
@@ -535,36 +698,24 @@ async function ensureDefaultPersonalDetailsService(): Promise<PersonalDetailsSer
   return toPersonalDetailsService(createdService);
 }
 
-function appendPersonalDetailsService(
-  services: ExpandedSelectedService[],
-  personalDetailsService: PersonalDetailsService,
-) {
-  if (services.some((service) => service.serviceId === personalDetailsService.serviceId)) {
-    return services;
-  }
-
-  return [
-    ...services,
-    {
-      serviceId: personalDetailsService.serviceId,
-      serviceName: personalDetailsService.serviceName,
-      price: 0,
-      currency: personalDetailsService.currency,
-    },
-  ];
-}
-
 async function getCompanyProfile(companyId: string) {
   const company = await User.findById(companyId).lean();
   if (!company || company.role !== "customer") {
     return null;
   }
 
+  const companyCountry = normalizeCountryName(
+    company.partnerProfile?.companyInformation?.address?.country ||
+      company.partnerProfile?.invoicingInformation?.address?.country ||
+      "",
+  );
+
   const selectedServices = (company.selectedServices ?? []).map((item) => ({
     serviceId: String(item.serviceId),
     serviceName: item.serviceName,
     price: typeof item.price === "number" ? item.price : 0,
     currency: item.currency as SupportedCurrency,
+    countryRates: normalizeCountryRates(item.countryRates, item.currency as SupportedCurrency),
   }));
 
   const selectedServiceIds = [...new Set(selectedServices.map((item) => item.serviceId))];
@@ -600,6 +751,7 @@ async function getCompanyProfile(companyId: string) {
         serviceName: item.serviceName || serviceMeta?.name || "Service",
         price: item.price,
         currency: item.currency,
+        countryRates: item.countryRates,
         isPackage: Boolean(serviceMeta?.isPackage),
         includedServiceIds: serviceMeta?.includedServiceIds ?? [],
         hiddenFromCustomerPortal: Boolean(serviceMeta?.hiddenFromCustomerPortal),
@@ -609,6 +761,7 @@ async function getCompanyProfile(companyId: string) {
 
   return {
     companyName: company.name || "Company",
+    companyCountry,
     services: resolvedServices,
   };
 }
@@ -616,6 +769,8 @@ async function getCompanyProfile(companyId: string) {
 async function expandSelectedServices(
   selectedServiceIds: string[],
   companyServices: CompanyServiceSelection[],
+  verificationCountry: string,
+  companyCountry: string,
 ) {
   const assignmentMap = new Map(companyServices.map((service) => [service.serviceId, service]));
   const selectedAssignments = selectedServiceIds
@@ -669,11 +824,17 @@ async function expandSelectedServices(
 
   for (const selectedService of selectedAssignments) {
     if (!selectedService.isPackage || selectedService.includedServiceIds.length === 0) {
+      const resolvedRate = resolveCountryRateForService(
+        selectedService,
+        verificationCountry,
+        companyCountry,
+      );
+
       pushService({
         serviceId: selectedService.serviceId,
         serviceName: selectedService.serviceName,
-        price: selectedService.price,
-        currency: selectedService.currency,
+        price: resolvedRate.price,
+        currency: resolvedRate.currency,
       });
       continue;
     }
@@ -681,11 +842,17 @@ async function expandSelectedServices(
     for (const includedServiceId of selectedService.includedServiceIds) {
       const assignedService = assignmentMap.get(includedServiceId);
       if (assignedService && !assignedService.isPackage && !assignedService.hiddenFromCustomerPortal) {
+        const resolvedRate = resolveCountryRateForService(
+          assignedService,
+          verificationCountry,
+          companyCountry,
+        );
+
         pushService({
           serviceId: assignedService.serviceId,
           serviceName: assignedService.serviceName,
-          price: assignedService.price,
-          currency: assignedService.currency,
+          price: resolvedRate.price,
+          currency: resolvedRate.currency,
         });
         continue;
       }
@@ -1058,6 +1225,11 @@ export async function GET(req: NextRequest) {
     .sort({ createdAt: -1 })
     .lean();
 
+  const personalDetailsService = await ensureDefaultPersonalDetailsService();
+  const alwaysVisibleResponseServiceIds = new Set([
+    personalDetailsService.serviceId,
+  ]);
+
   const selectedServiceIds = [
     ...new Set(
       items.flatMap((item) =>
@@ -1158,7 +1330,13 @@ export async function GET(req: NextRequest) {
     );
 
     const visibleCandidateFormResponses = (item.candidateFormResponses ?? [])
-      .filter((serviceResponse) => visibleServiceIds.has(String(serviceResponse.serviceId)))
+      .filter((serviceResponse) => {
+        const serviceId = String(serviceResponse.serviceId);
+        return (
+          visibleServiceIds.has(serviceId) ||
+          alwaysVisibleResponseServiceIds.has(serviceId)
+        );
+      })
       .map((serviceResponse) => {
         const serviceEntryCountRaw = Number(serviceResponse.serviceEntryCount);
         const serviceEntryCount =
@@ -1188,7 +1366,8 @@ export async function GET(req: NextRequest) {
       });
 
     const visibleCustomerRejectedFields = (item.customerRejectedFields ?? []).filter((field) =>
-      visibleServiceIds.has(String(field.serviceId)),
+      visibleServiceIds.has(String(field.serviceId)) ||
+      alwaysVisibleResponseServiceIds.has(String(field.serviceId)),
     );
 
     const visibleInvoiceSnapshot = item.invoiceSnapshot
@@ -1300,9 +1479,15 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  const resolvedVerificationCountry = normalizeCountryName(
+    parsed.data.verificationCountry || companyProfile.companyCountry || "",
+  );
+
   const selectedCompanyServices = await expandSelectedServices(
     parsed.data.selectedServiceIds,
     companyServices,
+    resolvedVerificationCountry,
+    companyProfile.companyCountry,
   );
 
   if (parsed.data.selectedServiceIds.length > 0 && selectedCompanyServices.length === 0) {
@@ -1311,12 +1496,6 @@ export async function POST(req: NextRequest) {
       { status: 400 },
     );
   }
-
-  const personalDetailsService = await ensureDefaultPersonalDetailsService();
-  const selectedServices = appendPersonalDetailsService(
-    selectedCompanyServices,
-    personalDetailsService,
-  );
 
   const candidateAccount = await ensureCandidateUser(
     parsed.data.candidateEmail,
@@ -1327,6 +1506,7 @@ export async function POST(req: NextRequest) {
     candidateName: parsed.data.candidateName,
     candidateEmail: parsed.data.candidateEmail.toLowerCase(),
     candidatePhone: parsed.data.candidatePhone || "",
+    verificationCountry: resolvedVerificationCountry,
     customer: companyId,
     createdBy: auth.userId,
     createdByDelegate: createdByDelegateId,
@@ -1335,7 +1515,7 @@ export async function POST(req: NextRequest) {
     candidateFormStatus: "pending",
     candidateSubmittedAt: null,
     candidateFormResponses: [],
-    selectedServices: selectedServices.map((item) => ({
+    selectedServices: selectedCompanyServices.map((item) => ({
       ...item,
       yearsOfChecking: parsed.data.serviceConfigs[item.serviceId] || "default",
     })),
@@ -1820,29 +2000,6 @@ export async function PATCH(req: NextRequest) {
     );
   }
 
-  const selectedCompanyServices = await expandSelectedServices(
-    parsed.data.selectedServiceIds,
-    companyServices,
-  );
-
-  if (parsed.data.selectedServiceIds.length > 0 && selectedCompanyServices.length === 0) {
-    return NextResponse.json(
-      { error: "Selected package deal is misconfigured. Please contact admin." },
-      { status: 400 },
-    );
-  }
-
-  const personalDetailsService = await ensureDefaultPersonalDetailsService();
-  const selectedServices = appendPersonalDetailsService(
-    selectedCompanyServices,
-    personalDetailsService,
-  );
-
-  const candidateAccount = await ensureCandidateUser(
-    parsed.data.candidateEmail,
-    parsed.data.candidateName,
-  );
-
   const existingFilter: Record<string, unknown> = {
     ...scopedFilter.filter,
     _id: parsed.data.requestId,
@@ -1861,12 +2018,39 @@ export async function PATCH(req: NextRequest) {
     );
   }
 
+  const resolvedVerificationCountry = normalizeCountryName(
+    parsed.data.verificationCountry ||
+      (typeof existing.verificationCountry === "string" ? existing.verificationCountry : "") ||
+      companyProfile.companyCountry ||
+      "",
+  );
+
+  const selectedCompanyServices = await expandSelectedServices(
+    parsed.data.selectedServiceIds,
+    companyServices,
+    resolvedVerificationCountry,
+    companyProfile.companyCountry,
+  );
+
+  if (parsed.data.selectedServiceIds.length > 0 && selectedCompanyServices.length === 0) {
+    return NextResponse.json(
+      { error: "Selected package deal is misconfigured. Please contact admin." },
+      { status: 400 },
+    );
+  }
+
+  const candidateAccount = await ensureCandidateUser(
+    parsed.data.candidateEmail,
+    parsed.data.candidateName,
+  );
+
   await VerificationRequest.findByIdAndUpdate(parsed.data.requestId, {
     candidateName: parsed.data.candidateName,
     candidateEmail: parsed.data.candidateEmail.toLowerCase(),
     candidatePhone: parsed.data.candidatePhone || "",
+    verificationCountry: resolvedVerificationCountry,
     candidateUser: candidateAccount.candidateUserId,
-    selectedServices,
+    selectedServices: selectedCompanyServices,
     status: "pending",
     candidateFormStatus: "pending",
     candidateSubmittedAt: null,

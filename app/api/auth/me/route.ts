@@ -30,6 +30,13 @@ export async function GET() {
     serviceName: item.serviceName,
     price: item.price,
     currency: item.currency,
+    countryRates: (item.countryRates ?? [])
+      .map((rate) => ({
+        country: String(rate.country ?? "").trim(),
+        price: Number(rate.price ?? 0),
+        currency: String(rate.currency ?? item.currency),
+      }))
+      .filter((rate) => rate.country.length > 0 && Number.isFinite(rate.price) && rate.price >= 0),
   }));
 
   const selectedServiceIds = [...new Set(selectedServices.map((item) => item.serviceId))];
@@ -114,6 +121,7 @@ export async function GET() {
       serviceName: item.serviceName,
       price: item.price,
       currency: item.currency,
+      countryRates: item.countryRates,
       isPackage: Boolean(serviceMeta?.isPackage),
       includedServiceIds: (serviceMeta?.includedServiceIds ?? []).filter(
         (serviceId) => !hiddenIncludedServiceIds.has(serviceId),

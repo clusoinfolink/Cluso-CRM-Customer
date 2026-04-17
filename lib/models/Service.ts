@@ -32,6 +32,7 @@ export type ServiceFormField = {
   forceUppercase?: boolean;
   allowNotApplicable?: boolean;
   notApplicableText?: string;
+  copyFromPersonalDetailsFieldKey?: string;
 };
 
 export interface IService extends Document {
@@ -93,6 +94,7 @@ const serviceSchema = new Schema<IService>(
         forceUppercase: { type: Boolean, default: false },
         allowNotApplicable: { type: Boolean, default: false },
         notApplicableText: { type: String, default: "" },
+        copyFromPersonalDetailsFieldKey: { type: String, default: "" },
       },
     ],
   },
@@ -110,7 +112,8 @@ const hasEnhancedServiceFields = Boolean(
     mongoose.models.Service?.schema.path("formFields.maxLength") &&
     mongoose.models.Service?.schema.path("formFields.forceUppercase") &&
     mongoose.models.Service?.schema.path("formFields.allowNotApplicable") &&
-    mongoose.models.Service?.schema.path("formFields.notApplicableText"),
+    mongoose.models.Service?.schema.path("formFields.notApplicableText") &&
+    mongoose.models.Service?.schema.path("formFields.copyFromPersonalDetailsFieldKey"),
 );
 const hasPackageFields = Boolean(
   mongoose.models.Service?.schema.path("isPackage") &&
