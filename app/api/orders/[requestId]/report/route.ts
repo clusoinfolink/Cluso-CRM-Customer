@@ -26,10 +26,21 @@ type ReportPayload = {
   status: string;
   createdAt: string;
   services: Array<{
+    serviceId: string;
+    serviceEntryIndex: number;
+    serviceEntryCount: number;
+    serviceInstanceKey: string;
     serviceName: string;
     status: string;
     verificationMode: string;
     comment: string;
+    candidateAnswers: Array<{
+      question: string;
+      value: string;
+      fieldType: string;
+      fileName: string;
+      fileData: string;
+    }>;
     attempts: Array<{
       attemptedAt: string;
       status: string;
@@ -649,6 +660,9 @@ async function buildPdfBuffer(report: ReportPayload) {
   }
 
   function estimateServiceIntroHeight(service: ReportPayload["services"][number]) {
+    const candidateAnswers = Array.isArray(service.candidateAnswers)
+      ? service.candidateAnswers
+      : [];
     const modeLines = wrapText(
       `Mode: ${toDisplayMode(service.verificationMode)}`,
       11.5,
@@ -661,9 +675,18 @@ async function buildPdfBuffer(report: ReportPayload) {
     const commentHeight = service.comment?.trim()
       ? wrapText(`Comment: ${service.comment.trim()}`, 11, contentWidth, false, "-").length * 13
       : 0;
+    const candidateAnswersHeight =
+      candidateAnswers.length > 0
+        ?
+            14 +
+            candidateAnswers.reduce((sum, answer) => {
+              const answerText = `${answer.question || "Field"}: ${answer.value || "-"}`;
+              return sum + wrapText(answerText, 10.5, contentWidth, false, "-").length * 12.2 + 3;
+            }, 0)
+        : 0;
 
     // 22 (heading) + modeHeight + commentHeight + 5 (spacing) + 36 (table header block)
-    return 63 + modeHeight + commentHeight;
+    return 63 + modeHeight + commentHeight + candidateAnswersHeight;
   }
 
   function buildAttemptRowLayout(
@@ -780,7 +803,10 @@ async function buildPdfBuffer(report: ReportPayload) {
     serviceIndex: number,
     isContinuation = false,
   ) {
-    ensureSpace(92);
+    const candidateAnswers = Array.isArray(service.candidateAnswers)
+      ? service.candidateAnswers
+      : [];
+    ensureSpace(Math.min(estimateServiceIntroHeight(service) + 10, maxServiceBlockHeight));
 
     const heading = `${serviceIndex + 1}. ${service.serviceName}${isContinuation ? " (Continued)" : ""}`;
     page.drawText(sanitizePdfText(heading), {
@@ -818,6 +844,25 @@ async function buildPdfBuffer(report: ReportPayload) {
       );
       drawWrappedLines(commentLines, contentLeft, y, 11, palette.ink, false, 13);
       y -= commentLines.length * 13;
+    }
+
+    if (candidateAnswers.length > 0) {
+      y -= 2;
+      page.drawText("Candidate Answers:", {
+        x: contentLeft,
+        y,
+        size: 10.8,
+        font: boldFont,
+        color: palette.ink,
+      });
+      y -= 13;
+
+      for (const answer of candidateAnswers) {
+        const answerText = `${answer.question || "Field"}: ${answer.value || "-"}`;
+        const answerLines = wrapText(answerText, 10.5, contentWidth, false, "-");
+        drawWrappedLines(answerLines, contentLeft, y, 10.5, palette.ink, false, 12.2);
+        y -= answerLines.length * 12.2 + 3;
+      }
     }
 
     y -= 5;

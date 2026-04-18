@@ -33,6 +33,24 @@ export type ServiceFormField = {
   allowNotApplicable?: boolean;
   notApplicableText?: string;
   copyFromPersonalDetailsFieldKey?: string;
+  previewWidth?: "full" | "half" | "third";
+};
+
+export type CandidateLayoutSnapshotField = {
+  fieldKey?: string;
+  question: string;
+  iconKey?: string;
+  fieldType: "text" | "long_text" | "number" | "file" | "date" | "dropdown";
+  dropdownOptions?: string[];
+  required: boolean;
+  repeatable?: boolean;
+  minLength?: number | null;
+  maxLength?: number | null;
+  forceUppercase?: boolean;
+  allowNotApplicable?: boolean;
+  notApplicableText?: string;
+  copyFromPersonalDetailsFieldKey?: string;
+  previewWidth?: "full" | "half" | "third";
 };
 
 export interface IService extends Document {
@@ -47,6 +65,7 @@ export interface IService extends Document {
   hiddenFromCustomerPortal?: boolean;
   isDefaultPersonalDetails?: boolean;
   formFields: ServiceFormField[];
+  candidateLayoutSnapshot?: CandidateLayoutSnapshotField[];
   createdAt: Date;
   updatedAt: Date;
 }
@@ -95,6 +114,37 @@ const serviceSchema = new Schema<IService>(
         allowNotApplicable: { type: Boolean, default: false },
         notApplicableText: { type: String, default: "" },
         copyFromPersonalDetailsFieldKey: { type: String, default: "" },
+        previewWidth: {
+          type: String,
+          enum: ["full", "half", "third"],
+          required: false,
+        },
+      },
+    ],
+    candidateLayoutSnapshot: [
+      {
+        fieldKey: { type: String, default: "" },
+        question: { type: String, required: true },
+        iconKey: { type: String, default: "diary" },
+        fieldType: {
+          type: String,
+          enum: ["text", "long_text", "number", "file", "date", "dropdown"],
+          required: true,
+        },
+        dropdownOptions: { type: [String], default: [] },
+        required: { type: Boolean, default: false },
+        repeatable: { type: Boolean, default: false },
+        minLength: { type: Number, default: null },
+        maxLength: { type: Number, default: null },
+        forceUppercase: { type: Boolean, default: false },
+        allowNotApplicable: { type: Boolean, default: false },
+        notApplicableText: { type: String, default: "" },
+        copyFromPersonalDetailsFieldKey: { type: String, default: "" },
+        previewWidth: {
+          type: String,
+          enum: ["full", "half", "third"],
+          required: false,
+        },
       },
     ],
   },
@@ -113,7 +163,11 @@ const hasEnhancedServiceFields = Boolean(
     mongoose.models.Service?.schema.path("formFields.forceUppercase") &&
     mongoose.models.Service?.schema.path("formFields.allowNotApplicable") &&
     mongoose.models.Service?.schema.path("formFields.notApplicableText") &&
-    mongoose.models.Service?.schema.path("formFields.copyFromPersonalDetailsFieldKey"),
+    mongoose.models.Service?.schema.path("formFields.copyFromPersonalDetailsFieldKey") &&
+    mongoose.models.Service?.schema.path("formFields.previewWidth") &&
+    mongoose.models.Service?.schema.path("candidateLayoutSnapshot") &&
+    mongoose.models.Service?.schema.path("candidateLayoutSnapshot.fieldType") &&
+    mongoose.models.Service?.schema.path("candidateLayoutSnapshot.previewWidth"),
 );
 const hasPackageFields = Boolean(
   mongoose.models.Service?.schema.path("isPackage") &&

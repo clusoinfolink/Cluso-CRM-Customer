@@ -147,6 +147,9 @@ const VerificationRequestSchema = new Schema(
           required: true,
         },
         serviceName: { type: String, required: true },
+        serviceEntryIndex: { type: Number, default: 1, min: 1 },
+        serviceEntryCount: { type: Number, default: 1, min: 1 },
+        serviceInstanceKey: { type: String, default: "", trim: true },
         status: {
           type: String,
           enum: ["pending", "verified", "unverified"],
@@ -314,6 +317,9 @@ if (
     !models.VerificationRequest.schema.path("enterpriseDecisionLockedAt") ||
     !models.VerificationRequest.schema.path("verificationCountry") ||
     !models.VerificationRequest.schema.path("serviceVerifications") ||
+    !models.VerificationRequest.schema.path("serviceVerifications.serviceEntryIndex") ||
+    !models.VerificationRequest.schema.path("serviceVerifications.serviceEntryCount") ||
+    !models.VerificationRequest.schema.path("serviceVerifications.serviceInstanceKey") ||
     !models.VerificationRequest.schema.path("serviceVerifications.attempts.screenshotData") ||
     !models.VerificationRequest.schema.path("serviceVerifications.attempts.verifierNote") ||
     !models.VerificationRequest.schema.path("serviceVerifications.attempts.attemptedAt") ||

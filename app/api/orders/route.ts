@@ -225,7 +225,8 @@ function normalizeDateValue(value: unknown) {
 }
 
 function normalizeCountryName(value: unknown) {
-  return String(value ?? "").trim().replace(/\s+/g, " ");
+  const normalized = String(value ?? "").trim().replace(/\s+/g, " ");
+  return normalized.toLowerCase() === "default" ? "" : normalized;
 }
 
 function normalizeAttachmentFileName(input: string, fallback: string) {

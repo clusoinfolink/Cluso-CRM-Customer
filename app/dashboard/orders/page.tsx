@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { ClipboardPlus, Sparkles } from "lucide-react";
 import { PortalFrame } from "@/components/dashboard/PortalFrame";
 import { BlockCard, BlockTitle } from "@/components/ui/blocks";
@@ -8,7 +8,9 @@ import { getAlertTone } from "@/lib/alerts";
 import { usePortalSession } from "@/lib/hooks/usePortalSession";
 
 const OBJECT_ID_PATTERN = /^[a-f\d]{24}$/i;
+const DEFAULT_VERIFICATION_COUNTRY = "Default";
 const VERIFICATION_COUNTRY_OPTIONS = [
+  DEFAULT_VERIFICATION_COUNTRY,
   "Afghanistan",
   "Armenia",
   "Australia",
@@ -67,7 +69,7 @@ export default function OrdersPage() {
   const [candidateName, setCandidateName] = useState("");
   const [candidateEmail, setCandidateEmail] = useState("");
   const [candidatePhone, setCandidatePhone] = useState("");
-  const [verificationCountry, setVerificationCountry] = useState(VERIFICATION_COUNTRY_OPTIONS[0]);
+  const [verificationCountry, setVerificationCountry] = useState(DEFAULT_VERIFICATION_COUNTRY);
   const [selectedServiceIds, setSelectedServiceIds] = useState<string[]>([]);
   const [serviceConfigs, setServiceConfigs] = useState<Record<string, string>>({});
   const [serviceSearch, setServiceSearch] = useState("");
@@ -125,36 +127,36 @@ export default function OrdersPage() {
     setServiceConfigs((prev) => ({ ...prev, [serviceId]: val }));
   }
 
-  function getIncludedServiceNames(service: {
-    includedServiceIds?: string[];
-    includedServiceNames?: string[];
-  }) {
-    const explicitNames = (service.includedServiceNames ?? [])
-      .map((name) => name.trim())
-      .filter((name) => name.length > 0);
+  const getIncludedServiceNames = useCallback(
+    (service: { includedServiceIds?: string[]; includedServiceNames?: string[] }) => {
+      const explicitNames = (service.includedServiceNames ?? [])
+        .map((name) => name.trim())
+        .filter((name) => name.length > 0);
 
-    if (explicitNames.length > 0) {
-      return [...new Set(explicitNames)];
-    }
+      if (explicitNames.length > 0) {
+        return [...new Set(explicitNames)];
+      }
 
-    const resolvedNames = (service.includedServiceIds ?? [])
-      .map((includedServiceId) => {
-        const mappedName = serviceNameById.get(includedServiceId);
-        if (mappedName) {
-          return mappedName.trim();
-        }
+      const resolvedNames = (service.includedServiceIds ?? [])
+        .map((includedServiceId) => {
+          const mappedName = serviceNameById.get(includedServiceId);
+          if (mappedName) {
+            return mappedName.trim();
+          }
 
-        if (OBJECT_ID_PATTERN.test(includedServiceId)) {
-          return null;
-        }
+          if (OBJECT_ID_PATTERN.test(includedServiceId)) {
+            return null;
+          }
 
-        const fallbackName = includedServiceId.trim();
-        return fallbackName.length > 0 ? fallbackName : null;
-      })
-      .filter((name): name is string => Boolean(name));
+          const fallbackName = includedServiceId.trim();
+          return fallbackName.length > 0 ? fallbackName : null;
+        })
+        .filter((name): name is string => Boolean(name));
 
-    return [...new Set(resolvedNames)];
-  }
+      return [...new Set(resolvedNames)];
+    },
+    [serviceNameById],
+  );
 
   const normalizedServiceSearch = serviceSearch.trim().toLowerCase();
   const filteredVisibleServices = useMemo(() => {
@@ -169,7 +171,7 @@ export default function OrdersPage() {
       const searchableText = `${service.serviceName} ${includedServiceNamesText}`.toLowerCase();
       return searchableText.includes(normalizedServiceSearch);
     });
-  }, [normalizedServiceSearch, serviceNameById, visibleServices]);
+  }, [getIncludedServiceNames, normalizedServiceSearch, visibleServices]);
 
   if (loading || !me) {
     return (
@@ -210,6 +212,7 @@ export default function OrdersPage() {
     setCandidateName("");
     setCandidateEmail("");
     setCandidatePhone("");
+    setVerificationCountry(DEFAULT_VERIFICATION_COUNTRY);
     setSelectedServiceIds([]);
     setServiceConfigs({});
     setMessage(data.message ?? "Request submitted.");
