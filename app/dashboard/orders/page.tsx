@@ -64,6 +64,42 @@ const VERIFICATION_COUNTRY_OPTIONS = [
   "United Kingdom",
 ];
 
+type OrderSubmissionPayload = {
+  candidateName: string;
+  candidateEmail: string;
+  candidatePhone: string;
+  verificationCountry: string;
+  selectedServiceIds: string[];
+  serviceConfigs: Record<string, string>;
+};
+
+type DuplicateServiceMatch = {
+  requestId: string;
+  serviceId: string;
+  serviceName: string;
+  requestedByName: string;
+  requestedAt: string;
+  requestStatus: string;
+};
+
+type SubmitOrderResponse = {
+  message?: string;
+  error?: string;
+  duplicateCheck?: {
+    candidateEmail?: string;
+    matches?: DuplicateServiceMatch[];
+  };
+};
+
+function formatDuplicateRequestedAt(value: string) {
+  const parsedDate = new Date(value);
+  if (Number.isNaN(parsedDate.getTime())) {
+    return "-";
+  }
+
+  return parsedDate.toLocaleString();
+}
+
 export default function OrdersPage() {
   const { me, loading, logout } = usePortalSession();
   const [candidateName, setCandidateName] = useState("");
@@ -75,6 +111,11 @@ export default function OrdersPage() {
   const [serviceSearch, setServiceSearch] = useState("");
   const [message, setMessage] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [duplicatePopupOpen, setDuplicatePopupOpen] = useState(false);
+  const [duplicateMatches, setDuplicateMatches] = useState<DuplicateServiceMatch[]>([]);
+  const [pendingOrderPayload, setPendingOrderPayload] =
+    useState<OrderSubmissionPayload | null>(null);
+  const [continuingAfterDuplicateWarning, setContinuingAfterDuplicateWarning] = useState(false);
 
   const availableServices = useMemo(() => me?.availableServices ?? [], [me?.availableServices]);
   const serviceNameById = useMemo(
@@ -183,40 +224,113 @@ export default function OrdersPage() {
     );
   }
 
-  async function submitOrder(e: FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    setMessage("");
-    setSubmitting(true);
-
-    const res = await fetch("/api/orders", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ 
-        candidateName, 
-        candidateEmail, 
-        candidatePhone, 
-        verificationCountry,
-        selectedServiceIds,
-        serviceConfigs 
-      }),
-    });
-
-    const data = (await res.json()) as { message?: string; error?: string };
-    setSubmitting(false);
-
-    if (!res.ok) {
-      setMessage(data.error ?? "Could not submit request.");
-      return;
-    }
-
+  function resetOrderForm() {
     setCandidateName("");
     setCandidateEmail("");
     setCandidatePhone("");
     setVerificationCountry(DEFAULT_VERIFICATION_COUNTRY);
     setSelectedServiceIds([]);
     setServiceConfigs({});
+  }
+
+  async function submitOrderPayload(
+    payload: OrderSubmissionPayload,
+    allowDuplicateSubmission: boolean,
+  ) {
+    const res = await fetch("/api/orders", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ...payload,
+        allowDuplicateSubmission,
+      }),
+    });
+
+    let data: SubmitOrderResponse = {};
+    try {
+      data = (await res.json()) as SubmitOrderResponse;
+    } catch {
+      data = {};
+    }
+
+    return { res, data };
+  }
+
+  function closeDuplicatePopup() {
+    if (continuingAfterDuplicateWarning) {
+      return;
+    }
+
+    setDuplicatePopupOpen(false);
+    setDuplicateMatches([]);
+    setPendingOrderPayload(null);
+  }
+
+  async function continueWithDuplicateSubmission() {
+    if (!pendingOrderPayload) {
+      return;
+    }
+
+    setMessage("");
+    setContinuingAfterDuplicateWarning(true);
+
+    const { res, data } = await submitOrderPayload(pendingOrderPayload, true);
+
+    setContinuingAfterDuplicateWarning(false);
+
+    if (!res.ok) {
+      setMessage(data.error ?? "Could not submit request.");
+      return;
+    }
+
+    setDuplicatePopupOpen(false);
+    setDuplicateMatches([]);
+    setPendingOrderPayload(null);
+    resetOrderForm();
     setMessage(data.message ?? "Request submitted.");
   }
+
+  async function submitOrder(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    setMessage("");
+    setSubmitting(true);
+
+    const payload: OrderSubmissionPayload = {
+      candidateName,
+      candidateEmail,
+      candidatePhone,
+      verificationCountry,
+      selectedServiceIds,
+      serviceConfigs,
+    };
+
+    const { res, data } = await submitOrderPayload(payload, false);
+    setSubmitting(false);
+
+    if (!res.ok) {
+      const duplicateList = data.duplicateCheck?.matches ?? [];
+      if (res.status === 409 && duplicateList.length > 0) {
+        setPendingOrderPayload(payload);
+        setDuplicateMatches(duplicateList);
+        setDuplicatePopupOpen(true);
+        setMessage(
+          "Potential duplicate found for this candidate email. Review details before continuing.",
+        );
+        return;
+      }
+
+      setMessage(data.error ?? "Could not submit request.");
+      return;
+    }
+
+    setDuplicatePopupOpen(false);
+    setDuplicateMatches([]);
+    setPendingOrderPayload(null);
+    resetOrderForm();
+    setMessage(data.message ?? "Request submitted.");
+  }
+
+  const submitBusy = submitting || continuingAfterDuplicateWarning;
 
   return (
     <PortalFrame
@@ -409,8 +523,8 @@ export default function OrdersPage() {
               </p>
             )}
 
-            <button className="btn btn-primary" type="submit" disabled={submitting}>
-              {submitting ? "Submitting..." : "Submit Verification Request"}
+            <button className="btn btn-primary" type="submit" disabled={submitBusy}>
+              {submitBusy ? "Submitting..." : "Submit Verification Request"}
             </button>
           </form>
         </BlockCard>
@@ -428,6 +542,128 @@ export default function OrdersPage() {
           </ol>
         </BlockCard>
       </section>
+
+      {duplicatePopupOpen ? (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            backgroundColor: "rgba(15, 23, 42, 0.48)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: "1rem",
+            zIndex: 1000,
+          }}
+          onClick={closeDuplicatePopup}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="Duplicate verification warning"
+            style={{
+              width: "min(860px, 100%)",
+              maxHeight: "85vh",
+              overflowY: "auto",
+              backgroundColor: "#FFFFFF",
+              borderRadius: "14px",
+              border: "1px solid #E5E7EB",
+              boxShadow: "0 24px 60px rgba(15, 23, 42, 0.24)",
+              padding: "1rem 1rem 0.9rem",
+            }}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <h2 style={{ margin: 0, fontSize: "1.05rem", color: "#1F2937" }}>
+              Potential Duplicate Verification Request
+            </h2>
+
+            <p style={{ marginTop: "0.65rem", marginBottom: "0.75rem", color: "#4B5563" }}>
+              We found existing requests for this candidate email with the same service(s). Review the
+              duplicate details below and choose whether to continue.
+            </p>
+
+            <div
+              style={{
+                border: "1px solid #E5E7EB",
+                borderRadius: "10px",
+                overflow: "hidden",
+                maxHeight: "42vh",
+                overflowY: "auto",
+              }}
+            >
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.9rem" }}>
+                <thead>
+                  <tr style={{ backgroundColor: "#F8FAFC", color: "#1F2937" }}>
+                    <th style={{ textAlign: "left", padding: "0.6rem 0.7rem", fontWeight: 700 }}>
+                      Service
+                    </th>
+                    <th style={{ textAlign: "left", padding: "0.6rem 0.7rem", fontWeight: 700 }}>
+                      Requested By
+                    </th>
+                    <th style={{ textAlign: "left", padding: "0.6rem 0.7rem", fontWeight: 700 }}>
+                      Requested On
+                    </th>
+                    <th style={{ textAlign: "left", padding: "0.6rem 0.7rem", fontWeight: 700 }}>
+                      Status
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {duplicateMatches.map((match, index) => (
+                    <tr
+                      key={`${match.requestId}-${match.serviceId}-${index}`}
+                      style={{ borderTop: "1px solid #E5E7EB" }}
+                    >
+                      <td style={{ padding: "0.62rem 0.7rem", color: "#111827" }}>
+                        {match.serviceName}
+                      </td>
+                      <td style={{ padding: "0.62rem 0.7rem", color: "#111827" }}>
+                        {match.requestedByName || "Unknown user"}
+                      </td>
+                      <td style={{ padding: "0.62rem 0.7rem", color: "#111827" }}>
+                        {formatDuplicateRequestedAt(match.requestedAt)}
+                      </td>
+                      <td style={{ padding: "0.62rem 0.7rem", color: "#111827", textTransform: "capitalize" }}>
+                        {match.requestStatus || "pending"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <p style={{ marginTop: "0.78rem", marginBottom: "0.82rem", color: "#374151" }}>
+              Do you want to continue and submit this verification request anyway?
+            </p>
+
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "flex-end",
+                gap: "0.55rem",
+                paddingBottom: "0.05rem",
+              }}
+            >
+              <button
+                className="btn"
+                type="button"
+                onClick={closeDuplicatePopup}
+                disabled={continuingAfterDuplicateWarning}
+              >
+                Cancel
+              </button>
+              <button
+                className="btn btn-primary"
+                type="button"
+                onClick={() => void continueWithDuplicateSubmission()}
+                disabled={continuingAfterDuplicateWarning}
+              >
+                {continuingAfterDuplicateWarning ? "Submitting..." : "Continue Anyway"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </PortalFrame>
   );
 }

@@ -17,6 +17,7 @@ const schema = z.object({
   verificationCountry: z.string().trim().optional().default(""),
   selectedServiceIds: z.array(z.string().min(1)).optional().default([]),
   serviceConfigs: z.record(z.string(), z.string()).optional().default({}),
+  allowDuplicateSubmission: z.boolean().optional().default(false),
 });
 
 const updateSchema = z.object({
@@ -56,6 +57,16 @@ const appealReverificationSchema = z.object({
   attachmentMimeType: z.string().trim().max(120).optional().default(""),
   attachmentFileSize: z.number().int().nonnegative().nullable().optional().default(null),
   attachmentData: z.string().trim().max(7_000_000).optional().default(""),
+});
+
+const previewCandidateLinkEmailSchema = z.object({
+  action: z.literal("preview-candidate-link-email"),
+  requestId: z.string().min(1),
+});
+
+const resendCandidateLinkSchema = z.object({
+  action: z.literal("resend-candidate-link"),
+  requestId: z.string().min(1),
 });
 
 const ENTERPRISE_REJECTION_WINDOW_MS = 10 * 60 * 1000;
@@ -519,6 +530,26 @@ type ExpandedSelectedService = {
   currency: SupportedCurrency;
 };
 
+type DuplicateServiceMatch = {
+  requestId: string;
+  serviceId: string;
+  serviceName: string;
+  requestedByName: string;
+  requestedAt: string;
+  requestStatus: string;
+};
+
+type DuplicateRequestCandidate = {
+  _id: unknown;
+  selectedServices?: Array<{
+    serviceId?: unknown;
+    serviceName?: unknown;
+  }>;
+  createdBy?: unknown;
+  createdAt?: unknown;
+  status?: unknown;
+};
+
 type PersonalDetailsService = {
   serviceId: string;
   serviceName: string;
@@ -875,12 +906,102 @@ async function expandSelectedServices(
   return expanded;
 }
 
+async function findDuplicateServiceMatches(params: {
+  companyId: string;
+  candidateEmail: string;
+  selectedServices: ExpandedSelectedService[];
+}) {
+  const normalizedCandidateEmail = params.candidateEmail.toLowerCase();
+  const selectedServiceNameById = new Map(
+    params.selectedServices.map((service) => [service.serviceId, service.serviceName]),
+  );
+  const selectedServiceIds = [...selectedServiceNameById.keys()];
+
+  if (selectedServiceIds.length === 0) {
+    return [] as DuplicateServiceMatch[];
+  }
+
+  const existingRequests = (await VerificationRequest.find({
+    customer: params.companyId,
+    candidateEmail: normalizedCandidateEmail,
+    "selectedServices.serviceId": { $in: selectedServiceIds },
+  })
+    .select("_id selectedServices createdBy createdAt status")
+    .sort({ createdAt: -1 })
+    .limit(100)
+    .lean()) as DuplicateRequestCandidate[];
+
+  if (existingRequests.length === 0) {
+    return [] as DuplicateServiceMatch[];
+  }
+
+  const creatorIds = [
+    ...new Set(
+      existingRequests.map((item) => String(item.createdBy ?? "")).filter(Boolean),
+    ),
+  ];
+
+  const creators =
+    creatorIds.length > 0
+      ? await User.find({ _id: { $in: creatorIds } }).select("name").lean()
+      : [];
+
+  const creatorNameById = new Map(
+    creators.map((creator) => [String(creator._id), creator.name || "Unknown user"]),
+  );
+
+  const duplicateMatches: DuplicateServiceMatch[] = [];
+
+  for (const existingRequest of existingRequests) {
+    const requestId = String(existingRequest._id);
+    const requestedByName =
+      creatorNameById.get(String(existingRequest.createdBy ?? "")) || "Unknown user";
+    const requestedAtDate = normalizeDateValue(existingRequest.createdAt);
+    const requestedAt = requestedAtDate ? requestedAtDate.toISOString() : "";
+    const requestStatus = String(existingRequest.status ?? "pending") || "pending";
+    const seenServiceIdsForRequest = new Set<string>();
+
+    for (const selectedService of existingRequest.selectedServices ?? []) {
+      const selectedServiceId = String(selectedService.serviceId ?? "");
+      if (!selectedServiceId || !selectedServiceNameById.has(selectedServiceId)) {
+        continue;
+      }
+
+      if (seenServiceIdsForRequest.has(selectedServiceId)) {
+        continue;
+      }
+
+      seenServiceIdsForRequest.add(selectedServiceId);
+
+      duplicateMatches.push({
+        requestId,
+        serviceId: selectedServiceId,
+        serviceName:
+          String(selectedService.serviceName ?? "").trim() ||
+          selectedServiceNameById.get(selectedServiceId) ||
+          "Service",
+        requestedByName,
+        requestedAt,
+        requestStatus,
+      });
+    }
+  }
+
+  return duplicateMatches;
+}
+
 type VerificationEmailPayload = {
   recipientName: string;
   recipientEmail: string;
   companyName: string;
   portalUrl: string;
   tempPassword?: string | null;
+};
+
+type VerificationEmailContent = {
+  subject: string;
+  text: string;
+  html: string;
 };
 
 type CandidateCorrectionEmailPayload = {
@@ -918,33 +1039,14 @@ function resolveCandidatePortalUrl() {
   return "https://candidate.secure.cluso.in";
 }
 
-async function sendVerificationRequestEmail(payload: VerificationEmailPayload): Promise<EmailResult> {
-  const smtpHost = process.env.SMTP_HOST?.trim();
-  const smtpPort = Number(process.env.SMTP_PORT ?? "587");
-  const smtpUser = process.env.SMTP_USER?.trim();
-  const smtpPass = process.env.SMTP_PASS?.trim();
-  const smtpSecure = process.env.SMTP_SECURE === "true" || smtpPort === 465;
-
-  if (!smtpHost || !smtpUser || !smtpPass || Number.isNaN(smtpPort)) {
-    return {
-      sent: false,
-      reason: "SMTP credentials are not configured.",
-    };
-  }
-
-  const transporter = nodemailer.createTransport({
-    host: smtpHost,
-    port: smtpPort,
-    secure: smtpSecure,
-    auth: {
-      user: smtpUser,
-      pass: smtpPass,
-    },
-  });
-
+function buildVerificationRequestEmailContent(
+  payload: VerificationEmailPayload,
+): VerificationEmailContent {
   const subject = "Background Verification Request";
-  const fromAddress =
-    process.env.VERIFICATION_MAIL_FROM?.trim() || `Cluso Infolink Team <${smtpUser}>`;
+  const safeRecipient = escapeHtml(payload.recipientName);
+  const safeCompany = escapeHtml(payload.companyName);
+  const safePortalUrl = escapeHtml(payload.portalUrl);
+  const safeRecipientEmail = escapeHtml(payload.recipientEmail);
 
   const loginHint = payload.tempPassword
     ? `\nYour candidate account was created for this request.\nLogin Email: ${payload.recipientEmail}\nTemporary Password: ${payload.tempPassword}\n`
@@ -957,7 +1059,7 @@ async function sendVerificationRequestEmail(payload: VerificationEmailPayload): 
     "",
     "We, Cluso Infolink, a background verification firm, have been requested to collect and verify your information to assess the genuineness of your application.",
     "",
-    `This verification process has been initiated by "${payload.companyName}" as part of their standard screening procedure.`,
+    `This verification process has been initiated by \"${payload.companyName}\" as part of their standard screening procedure.`,
     "",
     "To proceed, we have provided a secure link to our portal where you can submit your information and upload the required documents:",
     "",
@@ -976,12 +1078,8 @@ async function sendVerificationRequestEmail(payload: VerificationEmailPayload): 
     .filter(Boolean)
     .join("\n");
 
-  const safeRecipient = escapeHtml(payload.recipientName);
-  const safeCompany = escapeHtml(payload.companyName);
-  const safePortalUrl = escapeHtml(payload.portalUrl);
-
   const credentialsHtml = payload.tempPassword
-    ? `<p>Your candidate account was created for this request.<br />Login Email: ${payload.recipientEmail}<br />Temporary Password: ${payload.tempPassword}</p>`
+    ? `<p>Your candidate account was created for this request.<br />Login Email: ${safeRecipientEmail}<br />Temporary Password: ${escapeHtml(payload.tempPassword)}</p>`
     : "";
 
   const html = `
@@ -1018,13 +1116,44 @@ async function sendVerificationRequestEmail(payload: VerificationEmailPayload): 
     </p>
   `;
 
+  return { subject, text, html };
+}
+
+async function sendVerificationRequestEmail(payload: VerificationEmailPayload): Promise<EmailResult> {
+  const smtpHost = process.env.SMTP_HOST?.trim();
+  const smtpPort = Number(process.env.SMTP_PORT ?? "587");
+  const smtpUser = process.env.SMTP_USER?.trim();
+  const smtpPass = process.env.SMTP_PASS?.trim();
+  const smtpSecure = process.env.SMTP_SECURE === "true" || smtpPort === 465;
+
+  if (!smtpHost || !smtpUser || !smtpPass || Number.isNaN(smtpPort)) {
+    return {
+      sent: false,
+      reason: "SMTP credentials are not configured.",
+    };
+  }
+
+  const transporter = nodemailer.createTransport({
+    host: smtpHost,
+    port: smtpPort,
+    secure: smtpSecure,
+    auth: {
+      user: smtpUser,
+      pass: smtpPass,
+    },
+  });
+
+  const content = buildVerificationRequestEmailContent(payload);
+  const fromAddress =
+    process.env.VERIFICATION_MAIL_FROM?.trim() || `Cluso Infolink Team <${smtpUser}>`;
+
   try {
     await transporter.sendMail({
       from: fromAddress,
       to: payload.recipientEmail,
-      subject,
-      text,
-      html,
+      subject: content.subject,
+      text: content.text,
+      html: content.html,
     });
     return { sent: true };
   } catch (error) {
@@ -1498,6 +1627,28 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  if (!parsed.data.allowDuplicateSubmission) {
+    const duplicateMatches = await findDuplicateServiceMatches({
+      companyId,
+      candidateEmail: parsed.data.candidateEmail,
+      selectedServices: selectedCompanyServices,
+    });
+
+    if (duplicateMatches.length > 0) {
+      return NextResponse.json(
+        {
+          error:
+            "Potential duplicate request detected for this candidate email and selected services.",
+          duplicateCheck: {
+            candidateEmail: parsed.data.candidateEmail.toLowerCase(),
+            matches: duplicateMatches,
+          },
+        },
+        { status: 409 },
+      );
+    }
+  }
+
   const candidateAccount = await ensureCandidateUser(
     parsed.data.candidateEmail,
     parsed.data.candidateName,
@@ -1544,9 +1695,7 @@ export async function POST(req: NextRequest) {
   }
 
   if (candidateAccount.created && candidateAccount.tempPassword) {
-    messageParts.push(
-      `New candidate account created. Temporary password: ${candidateAccount.tempPassword}`,
-    );
+    messageParts.push("New candidate account created.");
   } else if (candidateAccount.blockedByRole) {
     messageParts.push(
       "An account with this email already exists with a non-candidate role, so candidate login is not enabled for this email.",
@@ -1581,6 +1730,152 @@ export async function PATCH(req: NextRequest) {
   const scopedFilter = await buildScopedRequestFilter(auth, companyId);
   if (!scopedFilter.ok) {
     return NextResponse.json({ error: scopedFilter.error }, { status: 403 });
+  }
+
+  const previewCandidateEmailParsed = previewCandidateLinkEmailSchema.safeParse(body);
+  if (previewCandidateEmailParsed.success) {
+    const requestFilter: Record<string, unknown> = {
+      ...scopedFilter.filter,
+      _id: previewCandidateEmailParsed.data.requestId,
+    };
+
+    const requestDoc = await VerificationRequest.findOne(requestFilter)
+      .select("candidateName candidateEmail")
+      .lean();
+
+    if (!requestDoc) {
+      return NextResponse.json({ error: "Request not found." }, { status: 404 });
+    }
+
+    const candidateEmail = String(requestDoc.candidateEmail ?? "").trim().toLowerCase();
+    if (!candidateEmail) {
+      return NextResponse.json({ error: "Candidate email is missing for this request." }, { status: 400 });
+    }
+
+    const companyProfile = await getCompanyProfile(companyId);
+    if (!companyProfile) {
+      return NextResponse.json({ error: "Company account not found." }, { status: 404 });
+    }
+
+    const portalUrl = resolveCandidatePortalUrl();
+    const emailContent = buildVerificationRequestEmailContent({
+      recipientName: String(requestDoc.candidateName ?? "Candidate").trim() || "Candidate",
+      recipientEmail: candidateEmail,
+      companyName: companyProfile.companyName,
+      portalUrl,
+      tempPassword: null,
+    });
+
+    return NextResponse.json({
+      message: "Candidate email preview generated.",
+      recipientEmail: candidateEmail,
+      subject: emailContent.subject,
+      text: emailContent.text,
+      portalUrl,
+    });
+  }
+
+  const resendCandidateLinkParsed = resendCandidateLinkSchema.safeParse(body);
+  if (resendCandidateLinkParsed.success) {
+    const requestFilter: Record<string, unknown> = {
+      ...scopedFilter.filter,
+      _id: resendCandidateLinkParsed.data.requestId,
+    };
+
+    const requestDoc = await VerificationRequest.findOne(requestFilter)
+      .select("candidateName candidateEmail candidateUser candidateFormStatus status")
+      .lean();
+
+    if (!requestDoc) {
+      return NextResponse.json({ error: "Request not found." }, { status: 404 });
+    }
+
+    if (requestDoc.status === "verified") {
+      return NextResponse.json(
+        { error: "Verified requests do not require candidate form link resend." },
+        { status: 400 },
+      );
+    }
+
+    if (requestDoc.candidateFormStatus === "submitted") {
+      return NextResponse.json(
+        { error: "Candidate already submitted the form for this request." },
+        { status: 400 },
+      );
+    }
+
+    const candidateEmail = String(requestDoc.candidateEmail ?? "").trim().toLowerCase();
+    if (!candidateEmail) {
+      return NextResponse.json({ error: "Candidate email is missing for this request." }, { status: 400 });
+    }
+
+    const companyProfile = await getCompanyProfile(companyId);
+    if (!companyProfile) {
+      return NextResponse.json({ error: "Company account not found." }, { status: 404 });
+    }
+
+    const candidateAccount = await ensureCandidateUser(
+      candidateEmail,
+      String(requestDoc.candidateName ?? "Candidate").trim() || "Candidate",
+    );
+
+    if (candidateAccount.blockedByRole) {
+      return NextResponse.json(
+        {
+          error:
+            "Candidate login cannot be enabled because this email is already assigned to another user role.",
+        },
+        { status: 400 },
+      );
+    }
+
+    const normalizedRequestCandidateUser = String(requestDoc.candidateUser ?? "").trim();
+    if (
+      candidateAccount.candidateUserId &&
+      normalizedRequestCandidateUser !== candidateAccount.candidateUserId
+    ) {
+      await VerificationRequest.findByIdAndUpdate(resendCandidateLinkParsed.data.requestId, {
+        candidateUser: candidateAccount.candidateUserId,
+      });
+    }
+
+    const portalUrl = resolveCandidatePortalUrl();
+    const emailPayload: VerificationEmailPayload = {
+      recipientName: String(requestDoc.candidateName ?? "Candidate").trim() || "Candidate",
+      recipientEmail: candidateEmail,
+      companyName: companyProfile.companyName,
+      portalUrl,
+      tempPassword: candidateAccount.created ? candidateAccount.tempPassword : null,
+    };
+
+    const emailContent = buildVerificationRequestEmailContent(emailPayload);
+    const emailResult = await sendVerificationRequestEmail(emailPayload);
+
+    if (!emailResult.sent) {
+      return NextResponse.json(
+        {
+          error: `Could not resend candidate email (${emailResult.reason || "email delivery failed"}).`,
+          recipientEmail: candidateEmail,
+          subject: emailContent.subject,
+          text: emailContent.text,
+          portalUrl,
+        },
+        { status: 502 },
+      );
+    }
+
+    const messageParts = ["Candidate form link resent successfully."];
+    if (candidateAccount.created) {
+      messageParts.push("New candidate account created.");
+    }
+
+    return NextResponse.json({
+      message: messageParts.join(" "),
+      recipientEmail: candidateEmail,
+      subject: emailContent.subject,
+      text: emailContent.text,
+      portalUrl,
+    });
   }
 
   const appealParsed = appealReverificationSchema.safeParse(body);
@@ -2081,9 +2376,7 @@ export async function PATCH(req: NextRequest) {
     );
   }
   if (candidateAccount.created && candidateAccount.tempPassword) {
-    messageParts.push(
-      `New candidate account created. Temporary password: ${candidateAccount.tempPassword}`,
-    );
+    messageParts.push("New candidate account created.");
   } else if (candidateAccount.blockedByRole) {
     messageParts.push(
       "Candidate login was not enabled because this email is already assigned to another user role.",

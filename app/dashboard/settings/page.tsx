@@ -988,7 +988,7 @@ export default function SettingsPage() {
           <section className="settings-form-section">
             <h3 className="settings-form-heading" style={{ fontSize: "0.98rem", color: "#2D405E", margin: 0, fontWeight: 600, display: "flex", alignItems: "center", gap: "0.4rem" }}>Additional Questions</h3>
 
-            <div className="settings-grid two-col">
+            <div className="settings-grid one-col">
               <div>
                 <label className="label" htmlFor="heard-about">
                   How did you hear about us? *
@@ -1015,27 +1015,6 @@ export default function SettingsPage() {
                     </option>
                   ))}
                 </select>
-              </div>
-
-              <div>
-                <label className="label" htmlFor="referred-by">
-                  If referred, list by whom
-                </label>
-                <input
-                  id="referred-by"
-                  className="input"
-                  placeholder="Name of referring client or person"
-                  value={profile.additionalQuestions.referredBy}
-                  onChange={(e) =>
-                    setProfile((prev) => ({
-                      ...prev,
-                      additionalQuestions: {
-                        ...prev.additionalQuestions,
-                        referredBy: e.target.value,
-                      },
-                    }))
-                  }
-                />
               </div>
             </div>
 

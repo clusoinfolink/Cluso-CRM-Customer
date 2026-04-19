@@ -202,13 +202,28 @@ type ReportPreviewAttempt = {
   managerName: string;
 };
 
+type ReportPreviewCandidateAnswer = {
+  question: string;
+  value: string;
+  fieldType: string;
+  fileName: string;
+  fileData: string;
+};
+
 type ReportPreviewService = {
+  serviceId: string;
+  serviceEntryIndex: number;
+  serviceEntryCount: number;
+  serviceInstanceKey: string;
   serviceName: string;
   status: string;
   verificationMode: string;
   comment: string;
+  candidateAnswers: ReportPreviewCandidateAnswer[];
   attempts: ReportPreviewAttempt[];
 };
+
+type ReportPreviewPersonalDetail = ReportPreviewCandidateAnswer;
 
 type ReportPreviewData = {
   reportNumber: string;
@@ -225,9 +240,19 @@ type ReportPreviewData = {
   };
   status: string;
   createdAt: string;
+  personalDetails: ReportPreviewPersonalDetail[];
   services: ReportPreviewService[];
   createdByName: string;
   verifiedByName: string;
+};
+
+type CandidateLinkEmailPreview = {
+  requestId: string;
+  candidateName: string;
+  recipientEmail: string;
+  subject: string;
+  text: string;
+  portalUrl: string;
 };
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -286,6 +311,10 @@ function toReportStatusLabel(value: string) {
     return "-";
   }
 
+  if (normalized === "in-progress") {
+    return "In Progress";
+  }
+
   return `${normalized.charAt(0).toUpperCase()}${normalized.slice(1)}`;
 }
 
@@ -293,6 +322,10 @@ function toReportAttemptStatusLabel(value: string) {
   const normalized = value.trim().toLowerCase();
   if (normalized === "verified") {
     return "Verified";
+  }
+
+  if (normalized === "unverified") {
+    return "Unverified";
   }
 
   return "In Progress";
@@ -330,7 +363,154 @@ function getReportAttemptStatusColor(status: string) {
     return "#0A7D2A";
   }
 
+  if (normalized === "unverified" || normalized === "rejected") {
+    return "#C62828";
+  }
+
   return "#A16207";
+}
+
+const PERSONAL_DETAILS_SERVICE_NAME = "personal details";
+const PERSONAL_DETAILS_QUESTION_SEQUENCE = [
+  "Full name (as per government ID)",
+  "Date of birth",
+  "Mobile number",
+  "Current residential address",
+  "Primary government ID number",
+  "Email address",
+  "Nationality",
+  "Gender",
+] as const;
+const PERSONAL_DETAILS_QUESTION_ORDER = new Map(
+  PERSONAL_DETAILS_QUESTION_SEQUENCE.map((question, index) => [
+    question.trim().toLowerCase(),
+    index,
+  ]),
+);
+
+function normalizeQuestionKey(value: string) {
+  return value.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function normalizePositiveInteger(value: unknown, fallback = 1) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return fallback;
+  }
+
+  return Math.floor(parsed);
+}
+
+function buildServiceInstanceKey(serviceId: string, serviceEntryIndex: number) {
+  return `${serviceId}::${normalizePositiveInteger(serviceEntryIndex)}`;
+}
+
+function formatServiceInstanceName(
+  serviceName: string,
+  serviceEntryIndex: number,
+  serviceEntryCount: number,
+) {
+  const trimmedName = serviceName.trim() || "Service";
+  if (serviceEntryCount <= 1) {
+    return trimmedName;
+  }
+
+  const suffix = ` ${serviceEntryIndex}`;
+  if (trimmedName.endsWith(suffix)) {
+    return trimmedName;
+  }
+
+  return `${trimmedName}${suffix}`;
+}
+
+function normalizePreviewAnswer(
+  answer: Partial<ReportPreviewCandidateAnswer>,
+): ReportPreviewCandidateAnswer {
+  return {
+    question: (answer.question ?? "").trim() || "Field",
+    value: (answer.value ?? "").trim() || "-",
+    fieldType: (answer.fieldType ?? "").trim() || "text",
+    fileName: (answer.fileName ?? "").trim(),
+    fileData: (answer.fileData ?? "").trim(),
+  };
+}
+
+function isPersonalDetailsServiceName(serviceName: string) {
+  return normalizeQuestionKey(serviceName) === PERSONAL_DETAILS_SERVICE_NAME;
+}
+
+function isLikelyPersonalDetailsQuestion(question: string) {
+  return PERSONAL_DETAILS_QUESTION_ORDER.has(normalizeQuestionKey(question));
+}
+
+function dedupePersonalDetailsAnswers(
+  answers: ReportPreviewCandidateAnswer[],
+): ReportPreviewPersonalDetail[] {
+  const dedupedByQuestion = new Map<string, ReportPreviewPersonalDetail>();
+
+  for (const rawAnswer of answers) {
+    const answer = normalizePreviewAnswer(rawAnswer);
+    const key = normalizeQuestionKey(answer.question);
+    if (!key) {
+      continue;
+    }
+
+    const existing = dedupedByQuestion.get(key);
+    if (!existing) {
+      dedupedByQuestion.set(key, answer);
+      continue;
+    }
+
+    if ((existing.value === "-" || !existing.value.trim()) && answer.value !== "-") {
+      dedupedByQuestion.set(key, answer);
+    }
+  }
+
+  return Array.from(dedupedByQuestion.values()).sort((first, second) => {
+    const firstKey = normalizeQuestionKey(first.question);
+    const secondKey = normalizeQuestionKey(second.question);
+    const firstRank = PERSONAL_DETAILS_QUESTION_ORDER.get(firstKey) ?? Number.MAX_SAFE_INTEGER;
+    const secondRank = PERSONAL_DETAILS_QUESTION_ORDER.get(secondKey) ?? Number.MAX_SAFE_INTEGER;
+    if (firstRank !== secondRank) {
+      return firstRank - secondRank;
+    }
+
+    return firstKey.localeCompare(secondKey);
+  });
+}
+
+function splitReportSections(
+  services: ReportPreviewService[],
+): {
+  services: ReportPreviewService[];
+  personalDetails: ReportPreviewPersonalDetail[];
+} {
+  const filteredServices: ReportPreviewService[] = [];
+  const personalDetails: ReportPreviewPersonalDetail[] = [];
+
+  for (const service of services) {
+    const answers = (service.candidateAnswers ?? []).map((answer) =>
+      normalizePreviewAnswer(answer),
+    );
+    const looksLikePersonalDetails =
+      answers.length > 0 && answers.every((answer) => isLikelyPersonalDetailsQuestion(answer.question));
+
+    if (isPersonalDetailsServiceName(service.serviceName) || looksLikePersonalDetails) {
+      personalDetails.push(...answers);
+      continue;
+    }
+
+    filteredServices.push({
+      ...service,
+      serviceName: service.serviceName || "Service",
+      candidateAnswers: answers,
+    });
+  }
+
+  return {
+    services: filteredServices,
+    personalDetails: dedupePersonalDetailsAnswers(personalDetails),
+  };
 }
 
 function parseStoredReportData(
@@ -343,6 +523,29 @@ function parseStoredReportData(
 
   const candidate = asRecord(root.candidate);
   const company = asRecord(root.company);
+  const personalDetailsRaw = Array.isArray(root.personalDetails)
+    ? root.personalDetails
+    : [];
+  const personalDetailsFromPayload = personalDetailsRaw
+    .map((answerEntry) => {
+      const answer = asRecord(answerEntry);
+      if (!answer) {
+        return null;
+      }
+
+      return normalizePreviewAnswer({
+        question: asString(answer.question),
+        value: asString(answer.value),
+        fieldType: asString(answer.fieldType, "text"),
+        fileName: asString(answer.fileName),
+        fileData: asString(answer.fileData),
+      });
+    })
+    .filter(
+      (
+        answer,
+      ): answer is ReportPreviewPersonalDetail => Boolean(answer),
+    );
 
   const services = (Array.isArray(root.services) ? root.services : [])
     .map((serviceEntry) => {
@@ -350,6 +553,43 @@ function parseStoredReportData(
       if (!service) {
         return null;
       }
+
+      const serviceId = asString(service.serviceId);
+      const serviceEntryIndex = normalizePositiveInteger(
+        service.serviceEntryIndex,
+        1,
+      );
+      const serviceEntryCount = Math.max(
+        1,
+        normalizePositiveInteger(service.serviceEntryCount, 1),
+        serviceEntryIndex,
+      );
+      const serviceInstanceKey =
+        asString(service.serviceInstanceKey) ||
+        (serviceId ? buildServiceInstanceKey(serviceId, serviceEntryIndex) : "");
+
+      const candidateAnswers = (
+        Array.isArray(service.candidateAnswers) ? service.candidateAnswers : []
+      )
+        .map((answerEntry) => {
+          const answer = asRecord(answerEntry);
+          if (!answer) {
+            return null;
+          }
+
+          return normalizePreviewAnswer({
+            question: asString(answer.question),
+            value: asString(answer.value),
+            fieldType: asString(answer.fieldType, "text"),
+            fileName: asString(answer.fileName),
+            fileData: asString(answer.fileData),
+          });
+        })
+        .filter(
+          (
+            answer,
+          ): answer is ReportPreviewCandidateAnswer => Boolean(answer),
+        );
 
       const attempts = (Array.isArray(service.attempts) ? service.attempts : [])
         .map((attemptEntry) => {
@@ -370,14 +610,25 @@ function parseStoredReportData(
         .filter((attempt): attempt is ReportPreviewAttempt => Boolean(attempt));
 
       return {
-        serviceName: asString(service.serviceName, "Unnamed Service"),
+        serviceId,
+        serviceEntryIndex,
+        serviceEntryCount,
+        serviceInstanceKey,
+        serviceName: asString(service.serviceName, "Service"),
         status: asString(service.status, "pending"),
         verificationMode: asString(service.verificationMode),
         comment: asString(service.comment),
+        candidateAnswers,
         attempts,
       } satisfies ReportPreviewService;
     })
     .filter((service): service is ReportPreviewService => Boolean(service));
+
+  const splitSections = splitReportSections(services);
+  const personalDetails =
+    personalDetailsFromPayload.length > 0
+      ? dedupePersonalDetailsAnswers(personalDetailsFromPayload)
+      : splitSections.personalDetails;
 
   return {
     reportNumber: asString(root.reportNumber),
@@ -394,38 +645,164 @@ function parseStoredReportData(
     },
     status: asString(root.status, "pending"),
     createdAt: asString(root.createdAt),
-    services,
+    personalDetails,
+    services: splitSections.services,
   };
+}
+
+type CandidateServiceResponse = NonNullable<RequestItem["candidateFormResponses"]>[number];
+type CandidateServiceAnswer = CandidateServiceResponse["answers"][number];
+
+function resolveServiceResponseEntryCount(serviceResponse: CandidateServiceResponse) {
+  const declaredCount = normalizePositiveInteger(serviceResponse.serviceEntryCount, 1);
+  const maxRepeatableCount = serviceResponse.answers.reduce((maxCount, answer) => {
+    const repeatableValues = parseRepeatableAnswerValues(answer.value, answer.repeatable);
+    return Math.max(maxCount, repeatableValues.length || 1);
+  }, 1);
+
+  return Math.max(declaredCount, maxRepeatableCount, 1);
+}
+
+function getAnswerValueForEntry(answer: CandidateServiceAnswer, entryIndex: number) {
+  const repeatableValues = parseRepeatableAnswerValues(answer.value, answer.repeatable);
+  if (repeatableValues.length === 0) {
+    return answer.value;
+  }
+
+  return repeatableValues[entryIndex] ?? "";
+}
+
+function buildCandidateAnswersByServiceInstance(item: RequestItem) {
+  const answersByServiceInstance = new Map<string, ReportPreviewCandidateAnswer[]>();
+
+  for (const serviceResponse of item.candidateFormResponses ?? []) {
+    const serviceId = serviceResponse.serviceId;
+    if (!serviceId) {
+      continue;
+    }
+
+    const serviceEntryCount = resolveServiceResponseEntryCount(serviceResponse);
+    for (let entryIndex = 0; entryIndex < serviceEntryCount; entryIndex += 1) {
+      const serviceEntryNumber = entryIndex + 1;
+      const serviceInstanceKey = buildServiceInstanceKey(serviceId, serviceEntryNumber);
+      const answers = serviceResponse.answers.map((answer) => {
+        const fieldType = answer.fieldType;
+        const fileName = answer.fileName ?? "";
+        const fileData = answer.fileData ?? "";
+        const value =
+          fieldType === "file" && fileData
+            ? fileName || "Attachment"
+            : getAnswerValueForEntry(answer, entryIndex).trim() || "-";
+
+        return normalizePreviewAnswer({
+          question: answer.question || "Field",
+          value,
+          fieldType,
+          fileName,
+          fileData,
+        });
+      });
+
+      answersByServiceInstance.set(serviceInstanceKey, answers);
+    }
+  }
+
+  return answersByServiceInstance;
 }
 
 function buildReportPreviewData(item: RequestItem, viewerName: string) {
   const stored = parseStoredReportData(item.reportData);
+  const candidateAnswersByServiceInstance =
+    buildCandidateAnswersByServiceInstance(item);
 
   const fallbackServices: ReportPreviewService[] =
     item.serviceVerifications && item.serviceVerifications.length > 0
-      ? item.serviceVerifications.map((service) => ({
-          serviceName: service.serviceName,
-          status: service.status,
-          verificationMode: service.verificationMode,
-          comment: service.comment,
-          attempts: (service.attempts ?? []).map((attempt) => ({
-            attemptedAt: attempt.attemptedAt,
-            status: attempt.status,
-            verificationMode: attempt.verificationMode,
-            comment: attempt.comment,
-            verifierName: attempt.verifierName ?? "",
-            managerName: attempt.managerName ?? "",
-          })),
-        }))
-      : (item.selectedServices ?? []).map((service) => ({
-          serviceName: service.serviceName,
-          status: "pending",
-          verificationMode: "",
-          comment: "",
-          attempts: [],
-        }));
+      ? item.serviceVerifications.map((service) => {
+          const serviceEntryIndex = normalizePositiveInteger(
+            service.serviceEntryIndex,
+            1,
+          );
+          const serviceEntryCount = Math.max(
+            1,
+            normalizePositiveInteger(service.serviceEntryCount, 1),
+            serviceEntryIndex,
+          );
+          const serviceInstanceKey =
+            service.serviceInstanceKey ||
+            buildServiceInstanceKey(service.serviceId, serviceEntryIndex);
 
-  const services = stored?.services.length ? stored.services : fallbackServices;
+          return {
+            serviceId: service.serviceId,
+            serviceEntryIndex,
+            serviceEntryCount,
+            serviceInstanceKey,
+            serviceName: formatServiceInstanceName(
+              service.serviceName,
+              serviceEntryIndex,
+              serviceEntryCount,
+            ),
+            status: service.status,
+            verificationMode: service.verificationMode,
+            comment: service.comment,
+            candidateAnswers:
+              candidateAnswersByServiceInstance.get(serviceInstanceKey) ?? [],
+            attempts: (service.attempts ?? []).map((attempt) => ({
+              attemptedAt: attempt.attemptedAt,
+              status: attempt.status,
+              verificationMode: attempt.verificationMode,
+              comment: attempt.comment,
+              verifierName: attempt.verifierName ?? "",
+              managerName: attempt.managerName ?? "",
+            })),
+          };
+        })
+      : (() => {
+          const selectedServices = item.selectedServices ?? [];
+          const totalCountByServiceId = new Map<string, number>();
+          for (const selected of selectedServices) {
+            totalCountByServiceId.set(
+              selected.serviceId,
+              (totalCountByServiceId.get(selected.serviceId) ?? 0) + 1,
+            );
+          }
+
+          const entryIndexByServiceId = new Map<string, number>();
+          return selectedServices.map((service) => {
+            const serviceEntryIndex = (entryIndexByServiceId.get(service.serviceId) ?? 0) + 1;
+            entryIndexByServiceId.set(service.serviceId, serviceEntryIndex);
+            const serviceEntryCount = totalCountByServiceId.get(service.serviceId) ?? 1;
+            const serviceInstanceKey = buildServiceInstanceKey(
+              service.serviceId,
+              serviceEntryIndex,
+            );
+
+            return {
+              serviceId: service.serviceId,
+              serviceEntryIndex,
+              serviceEntryCount,
+              serviceInstanceKey,
+              serviceName: formatServiceInstanceName(
+                service.serviceName,
+                serviceEntryIndex,
+                serviceEntryCount,
+              ),
+              status: "pending",
+              verificationMode: "",
+              comment: "",
+              candidateAnswers:
+                candidateAnswersByServiceInstance.get(serviceInstanceKey) ?? [],
+              attempts: [],
+            };
+          });
+        })();
+
+  const sourceServices = stored?.services.length ? stored.services : fallbackServices;
+  const splitSections = splitReportSections(sourceServices);
+  const personalDetails =
+    stored?.personalDetails && stored.personalDetails.length > 0
+      ? dedupePersonalDetailsAnswers(stored.personalDetails)
+      : splitSections.personalDetails;
+  const services = splitSections.services;
   const latestAttempt = services
     .flatMap((service) => service.attempts)
     .slice()
@@ -461,6 +838,7 @@ function buildReportPreviewData(item: RequestItem, viewerName: string) {
     },
     status: stored?.status || item.status,
     createdAt: stored?.createdAt || item.createdAt,
+    personalDetails,
     services,
     createdByName: generatedByName,
     verifiedByName:
@@ -630,6 +1008,10 @@ function RequestsPageContent() {
   const [decisioningRequestId, setDecisioningRequestId] = useState("");
   const [tablePage, setTablePage] = useState(1);
   const [manualRefreshInProgress, setManualRefreshInProgress] = useState(false);
+  const [resendingCandidateLinkRequestId, setResendingCandidateLinkRequestId] = useState("");
+  const [loadingCandidateLinkPreviewRequestId, setLoadingCandidateLinkPreviewRequestId] = useState("");
+  const [candidateLinkEmailPreview, setCandidateLinkEmailPreview] =
+    useState<CandidateLinkEmailPreview | null>(null);
 
   const [editingRequestId, setEditingRequestId] = useState("");
   const [editCandidateName, setEditCandidateName] = useState("");
@@ -811,6 +1193,14 @@ function RequestsPageContent() {
   const activeReportRequest = useMemo(
     () => items.find((item) => item._id === activeReportRequestId) ?? null,
     [activeReportRequestId, items],
+  );
+
+  const candidateLinkPreviewRequest = useMemo(
+    () =>
+      candidateLinkEmailPreview
+        ? items.find((item) => item._id === candidateLinkEmailPreview.requestId) ?? null
+        : null,
+    [candidateLinkEmailPreview, items],
   );
 
   const activeReportAppealServiceOptions = useMemo(
@@ -1252,11 +1642,155 @@ function RequestsPageContent() {
     await refreshRequests();
   }
 
+  async function openCandidateLinkEmailPreview(item: RequestItem) {
+    setMessage("");
+    setLoadingCandidateLinkPreviewRequestId(item._id);
+
+    const response = await fetch("/api/orders", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "preview-candidate-link-email",
+        requestId: item._id,
+      }),
+    });
+
+    const data = (await response.json()) as {
+      message?: string;
+      error?: string;
+      recipientEmail?: string;
+      subject?: string;
+      text?: string;
+      portalUrl?: string;
+    };
+    setLoadingCandidateLinkPreviewRequestId("");
+
+    if (!response.ok) {
+      setMessage(data.error ?? "Could not generate candidate email preview.");
+      return;
+    }
+
+    setCandidateLinkEmailPreview({
+      requestId: item._id,
+      candidateName: item.candidateName,
+      recipientEmail: data.recipientEmail || item.candidateEmail || "-",
+      subject: data.subject || "Background Verification Request",
+      text: data.text || "",
+      portalUrl: data.portalUrl || "",
+    });
+  }
+
+  async function resendCandidateLink(item: RequestItem) {
+    setMessage("");
+    setResendingCandidateLinkRequestId(item._id);
+
+    const response = await fetch("/api/orders", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "resend-candidate-link",
+        requestId: item._id,
+      }),
+    });
+
+    const data = (await response.json()) as {
+      message?: string;
+      error?: string;
+      recipientEmail?: string;
+      subject?: string;
+      text?: string;
+      portalUrl?: string;
+    };
+    setResendingCandidateLinkRequestId("");
+
+    if (data.subject && data.text) {
+      setCandidateLinkEmailPreview({
+        requestId: item._id,
+        candidateName: item.candidateName,
+        recipientEmail: data.recipientEmail || item.candidateEmail || "-",
+        subject: data.subject,
+        text: data.text,
+        portalUrl: data.portalUrl || "",
+      });
+    }
+
+    if (!response.ok) {
+      setMessage(data.error ?? "Could not resend candidate link.");
+      return;
+    }
+
+    setMessage(data.message ?? "Candidate form link resent successfully.");
+    await refreshRequests();
+  }
+
+  function closeCandidateLinkEmailPreview() {
+    setCandidateLinkEmailPreview(null);
+  }
+
+  async function copyCandidateLinkEmailPreview() {
+    if (!candidateLinkEmailPreview) {
+      return;
+    }
+
+    const composed = [
+      `To: ${candidateLinkEmailPreview.recipientEmail}`,
+      `Subject: ${candidateLinkEmailPreview.subject}`,
+      "",
+      candidateLinkEmailPreview.text,
+    ].join("\n");
+
+    try {
+      await navigator.clipboard.writeText(composed);
+      setMessage("Candidate email content copied. You can paste and share it manually.");
+    } catch {
+      setMessage("Could not copy email content. Please copy the text manually.");
+    }
+  }
+
+  async function copyCandidatePortalLink() {
+    if (!candidateLinkEmailPreview) {
+      return;
+    }
+
+    const portalLink = candidateLinkEmailPreview.portalUrl.trim();
+    if (!portalLink) {
+      setMessage("Candidate portal link is unavailable for this request.");
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(portalLink);
+      setMessage("Candidate portal link copied.");
+    } catch {
+      setMessage("Could not copy portal link. Please copy it manually from the email body.");
+    }
+  }
+
   function renderResponseContent(item: RequestItem) {
     const serviceResponses = item.candidateFormResponses ?? [];
-    const totalServices = serviceResponses.length;
-    const totalFields = serviceResponses.reduce(
-      (count, serviceResponse) => count + serviceResponse.answers.length,
+    const serviceResponseEntries = serviceResponses.flatMap((serviceResponse) => {
+      const serviceEntryCount = resolveServiceResponseEntryCount(serviceResponse);
+
+      return Array.from({ length: serviceEntryCount }, (_, entryIndex) => {
+        const serviceEntryNumber = entryIndex + 1;
+        return {
+          serviceId: serviceResponse.serviceId,
+          serviceEntryNumber,
+          serviceEntryCount,
+          serviceDisplayName: formatServiceInstanceName(
+            serviceResponse.serviceName,
+            serviceEntryNumber,
+            serviceEntryCount,
+          ),
+          answers: serviceResponse.answers,
+          entryIndex,
+        };
+      });
+    });
+
+    const totalServices = serviceResponseEntries.length;
+    const totalFields = serviceResponseEntries.reduce(
+      (count, serviceResponseEntry) => count + serviceResponseEntry.answers.length,
       0,
     );
 
@@ -1293,9 +1827,9 @@ function RequestsPageContent() {
           </div>
         </div>
 
-        {serviceResponses.map((serviceResponse) => (
+        {serviceResponseEntries.map((serviceResponseEntry) => (
           <section
-            key={`${item._id}-${serviceResponse.serviceId}`}
+            key={`${item._id}-${serviceResponseEntry.serviceId}-${serviceResponseEntry.serviceEntryNumber}`}
             style={{
               border: "1px solid #DDE5EF",
               borderRadius: "10px",
@@ -1304,7 +1838,9 @@ function RequestsPageContent() {
             }}
           >
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "0.7rem", flexWrap: "wrap" }}>
-              <strong style={{ color: "#2D405E", fontSize: "0.95rem" }}>{serviceResponse.serviceName}</strong>
+              <strong style={{ color: "#2D405E", fontSize: "0.95rem" }}>
+                {serviceResponseEntry.serviceDisplayName}
+              </strong>
               <span
                 style={{
                   border: "1px solid #DDE5EF",
@@ -1316,12 +1852,12 @@ function RequestsPageContent() {
                   background: "#F8FAFD",
                 }}
               >
-                {serviceResponse.answers.length} fields
+                {serviceResponseEntry.answers.length} fields
               </span>
             </div>
 
             <div style={{ marginTop: "0.55rem" }}>
-              {serviceResponse.answers.length === 0 ? (
+              {serviceResponseEntry.answers.length === 0 ? (
                 <span style={{ color: "#667892" }}>No answers available.</span>
               ) : (
                 <div style={{ overflowX: "auto" }}>
@@ -1334,41 +1870,35 @@ function RequestsPageContent() {
                       </tr>
                     </thead>
                     <tbody>
-                      {serviceResponse.answers.map((answer, answerIndex) => {
-                        const repeatableValues = parseRepeatableAnswerValues(
-                          answer.value,
-                          answer.repeatable,
-                        );
+                      {serviceResponseEntry.answers.map((answer, answerIndex) => {
+                        const answerValueForEntry = getAnswerValueForEntry(
+                          answer,
+                          serviceResponseEntry.entryIndex,
+                        ).trim();
                         const valueText =
                           answer.fieldType === "file"
                             ? answer.fileName || "File uploaded"
-                            : repeatableValues.length > 0
-                              ? repeatableValues.join(", ")
-                              : answer.value || "-";
+                            : answerValueForEntry || "-";
 
                         return (
-                          <tr key={`${serviceResponse.serviceId}-${answerIndex}`} style={{ borderBottom: "1px solid #F0F3F8" }}>
+                          <tr
+                            key={`${serviceResponseEntry.serviceId}-${serviceResponseEntry.serviceEntryNumber}-${answerIndex}`}
+                            style={{ borderBottom: "1px solid #F0F3F8" }}
+                          >
                             <td style={{ padding: "0.55rem 0.45rem", fontWeight: 600, color: "#2D405E" }}>{answer.question}</td>
                             <td style={{ padding: "0.55rem 0.45rem", color: "#334A67", maxWidth: "300px" }}>
-                              {repeatableValues.length > 0 ? (
-                                <ul style={{ margin: 0, paddingLeft: "1.1rem", display: "grid", gap: "0.2rem" }}>
-                                  {repeatableValues.map((entry, entryIndex) => (
-                                    <li key={`${serviceResponse.serviceId}-${answerIndex}-entry-${entryIndex}`} style={{ whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
-                                      {entry}
-                                    </li>
-                                  ))}
-                                </ul>
-                              ) : (
-                                <span style={{ whiteSpace: answer.fieldType === "long_text" ? "pre-wrap" : "normal", wordBreak: "break-word" }}>
-                                  {valueText}
-                                </span>
-                              )}
+                              <span style={{ whiteSpace: answer.fieldType === "long_text" ? "pre-wrap" : "normal", wordBreak: "break-word" }}>
+                                {valueText}
+                              </span>
                             </td>
                             <td style={{ padding: "0.55rem 0.45rem" }}>
                               {answer.fieldType === "file" && answer.fileData ? (
                                 <a
                                   href={answer.fileData}
-                                  download={answer.fileName || `attachment-${answerIndex}`}
+                                  download={
+                                    answer.fileName ||
+                                    `attachment-${serviceResponseEntry.serviceEntryNumber}-${answerIndex}`
+                                  }
                                   style={{
                                     display: "inline-flex",
                                     alignItems: "center",
@@ -1593,6 +2123,85 @@ function RequestsPageContent() {
 
             <div style={{ borderTop: "1px solid #717171", marginTop: "1.1rem" }} />
 
+            {report.personalDetails.length > 0 ? (
+              <section style={{ marginTop: "1.05rem" }}>
+                <h3
+                  style={{
+                    margin: 0,
+                    color: "#1F4597",
+                    fontSize: "1.52rem",
+                    fontWeight: 700,
+                  }}
+                >
+                  Personal Details
+                </h3>
+                <div style={{ overflowX: "auto", marginTop: "0.45rem" }}>
+                  <table
+                    style={{
+                      width: "100%",
+                      minWidth: "690px",
+                      borderCollapse: "collapse",
+                      fontSize: "0.94rem",
+                      border: "1px solid #CBD5E1",
+                    }}
+                  >
+                    <thead>
+                      <tr style={{ background: "#F8FAFC", textAlign: "left" }}>
+                        <th style={{ padding: "0.3rem 0.35rem", width: "42%" }}>Field</th>
+                        <th style={{ padding: "0.3rem 0.35rem" }}>Response</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {report.personalDetails.map((detail, detailIndex) => (
+                        <tr
+                          key={`${item._id}-preview-personal-detail-${detailIndex}`}
+                          style={{ borderTop: "1px solid #E2E8F0", verticalAlign: "top" }}
+                        >
+                          <td style={{ padding: "0.35rem" }}>{detail.question || "Field"}</td>
+                          <td style={{ padding: "0.35rem", lineHeight: 1.35 }}>
+                            {detail.fieldType === "file" && detail.fileData ? (
+                              <span style={{ display: "inline-flex", gap: "0.55rem", flexWrap: "wrap" }}>
+                                <span>{detail.fileName || "Attachment"}</span>
+                                <a
+                                  href={detail.fileData}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  style={{ color: "#2563EB", textDecoration: "none" }}
+                                  onMouseEnter={(event) =>
+                                    (event.currentTarget.style.textDecoration = "underline")
+                                  }
+                                  onMouseLeave={(event) =>
+                                    (event.currentTarget.style.textDecoration = "none")
+                                  }
+                                >
+                                  View
+                                </a>
+                                <a
+                                  href={detail.fileData}
+                                  download={detail.fileName || `personal-detail-${detailIndex + 1}`}
+                                  style={{ color: "#2563EB", textDecoration: "none" }}
+                                  onMouseEnter={(event) =>
+                                    (event.currentTarget.style.textDecoration = "underline")
+                                  }
+                                  onMouseLeave={(event) =>
+                                    (event.currentTarget.style.textDecoration = "none")
+                                  }
+                                >
+                                  Download
+                                </a>
+                              </span>
+                            ) : (
+                              detail.value || "-"
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </section>
+            ) : null}
+
             <section style={{ marginTop: "1.35rem" }}>
               <h3
                 style={{
@@ -1645,6 +2254,77 @@ function RequestsPageContent() {
                         <p style={{ margin: "0.15rem 0 0", fontSize: "1.08rem" }}>
                           <strong>Comment:</strong> {service.comment}
                         </p>
+                      ) : null}
+
+                      {service.candidateAnswers.length > 0 ? (
+                        <div style={{ overflowX: "auto", marginTop: "0.45rem" }}>
+                          <table
+                            style={{
+                              width: "100%",
+                              minWidth: "690px",
+                              borderCollapse: "collapse",
+                              fontSize: "0.94rem",
+                              border: "1px solid #CBD5E1",
+                            }}
+                          >
+                            <thead>
+                              <tr style={{ background: "#F8FAFC", textAlign: "left" }}>
+                                <th style={{ padding: "0.3rem 0.35rem", width: "42%" }}>
+                                  Candidate Answers
+                                </th>
+                                <th style={{ padding: "0.3rem 0.35rem" }}>Response</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {service.candidateAnswers.map((answer, answerIndex) => (
+                                <tr
+                                  key={`${item._id}-preview-service-${serviceIndex}-answer-${answerIndex}`}
+                                  style={{ borderTop: "1px solid #E2E8F0", verticalAlign: "top" }}
+                                >
+                                  <td style={{ padding: "0.35rem" }}>
+                                    {answer.question || "Field"}
+                                  </td>
+                                  <td style={{ padding: "0.35rem", lineHeight: 1.35 }}>
+                                    {answer.fieldType === "file" && answer.fileData ? (
+                                      <span style={{ display: "inline-flex", gap: "0.55rem", flexWrap: "wrap" }}>
+                                        <span>{answer.fileName || "Attachment"}</span>
+                                        <a
+                                          href={answer.fileData}
+                                          target="_blank"
+                                          rel="noreferrer"
+                                          style={{ color: "#2563EB", textDecoration: "none" }}
+                                          onMouseEnter={(event) =>
+                                            (event.currentTarget.style.textDecoration = "underline")
+                                          }
+                                          onMouseLeave={(event) =>
+                                            (event.currentTarget.style.textDecoration = "none")
+                                          }
+                                        >
+                                          View
+                                        </a>
+                                        <a
+                                          href={answer.fileData}
+                                          download={answer.fileName || `candidate-answer-${answerIndex + 1}`}
+                                          style={{ color: "#2563EB", textDecoration: "none" }}
+                                          onMouseEnter={(event) =>
+                                            (event.currentTarget.style.textDecoration = "underline")
+                                          }
+                                          onMouseLeave={(event) =>
+                                            (event.currentTarget.style.textDecoration = "none")
+                                          }
+                                        >
+                                          Download
+                                        </a>
+                                      </span>
+                                    ) : (
+                                      answer.value || "-"
+                                    )}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
                       ) : null}
 
                       <div style={{ overflowX: "auto", marginTop: "0.42rem" }}>
@@ -1886,6 +2566,8 @@ function RequestsPageContent() {
                     item.status === "verified" &&
                     Boolean(item.reportData) &&
                     Boolean(item.reportMetadata?.customerSharedAt);
+                  const canManageCandidateLink =
+                    item.status !== "verified" && item.candidateFormStatus !== "submitted";
 
                   return (
                     <tr
@@ -2014,6 +2696,42 @@ function RequestsPageContent() {
                              disabled={!canViewSharedReport}
                            >
                              View Report
+                           </button>
+
+                           <button
+                             type="button"
+                             className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all shadow-sm ${
+                               canManageCandidateLink
+                                 ? "bg-sky-100 border border-sky-300 text-sky-800 hover:-translate-y-0.5 hover:bg-sky-200 hover:border-sky-400 hover:text-sky-900 active:translate-y-0 active:scale-[0.98] active:bg-sky-300 active:border-sky-500 active:text-sky-950"
+                                 : "bg-slate-50 border border-slate-200 text-slate-400 cursor-not-allowed"
+                             }`}
+                             onClick={() => void openCandidateLinkEmailPreview(item)}
+                             disabled={
+                               !canManageCandidateLink ||
+                               loadingCandidateLinkPreviewRequestId === item._id
+                             }
+                           >
+                             {loadingCandidateLinkPreviewRequestId === item._id
+                               ? "Loading..."
+                               : "View Email"}
+                           </button>
+
+                           <button
+                             type="button"
+                             className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all shadow-sm ${
+                               canManageCandidateLink
+                                 ? "bg-indigo-100 border border-indigo-300 text-indigo-800 hover:-translate-y-0.5 hover:bg-indigo-200 hover:border-indigo-400 hover:text-indigo-900 active:translate-y-0 active:scale-[0.98] active:bg-indigo-300 active:border-indigo-500 active:text-indigo-950"
+                                 : "bg-slate-50 border border-slate-200 text-slate-400 cursor-not-allowed"
+                             }`}
+                             onClick={() => void resendCandidateLink(item)}
+                             disabled={
+                               !canManageCandidateLink ||
+                               resendingCandidateLinkRequestId === item._id
+                             }
+                           >
+                             {resendingCandidateLinkRequestId === item._id
+                               ? "Resending..."
+                               : "Resend Link"}
                            </button>
 
                            {item.status === "rejected" && (
@@ -2352,6 +3070,118 @@ function RequestsPageContent() {
           </div>
         ) : null}
       </div>
+
+      {candidateLinkEmailPreview ? (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Candidate link email preview"
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(15, 23, 42, 0.56)",
+            zIndex: 1260,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: "1rem",
+          }}
+        >
+          <div
+            className="glass-card"
+            style={{
+              width: "min(860px, calc(100vw - 2rem))",
+              maxHeight: "88vh",
+              overflowY: "auto",
+              padding: "1rem",
+              background: "#FFFFFF",
+              display: "grid",
+              gap: "0.85rem",
+            }}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "0.9rem", flexWrap: "wrap" }}>
+              <div>
+                <h3 style={{ margin: 0, color: "#1E293B" }}>Candidate Email Preview</h3>
+                <p style={{ margin: "0.35rem 0 0", color: "#64748B" }}>
+                  {candidateLinkEmailPreview.candidateName} • {candidateLinkEmailPreview.recipientEmail}
+                </p>
+              </div>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={closeCandidateLinkEmailPreview}
+                style={{ padding: "0.42rem 0.72rem" }}
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div style={{ display: "grid", gap: "0.45rem" }}>
+              <label className="label" htmlFor="candidate-link-email-subject">
+                Subject
+              </label>
+              <input
+                id="candidate-link-email-subject"
+                className="input"
+                value={candidateLinkEmailPreview.subject}
+                readOnly
+              />
+            </div>
+
+            <div style={{ display: "grid", gap: "0.45rem" }}>
+              <label className="label" htmlFor="candidate-link-email-text">
+                Email Body
+              </label>
+              <textarea
+                id="candidate-link-email-text"
+                className="input"
+                value={candidateLinkEmailPreview.text}
+                rows={14}
+                readOnly
+                style={{ whiteSpace: "pre-wrap" }}
+              />
+            </div>
+
+            <div style={{ display: "flex", justifyContent: "space-between", gap: "0.6rem", flexWrap: "wrap" }}>
+              <div style={{ color: "#64748B", fontSize: "0.82rem" }}>
+                Copy this template and send manually if candidate email delivery fails.
+              </div>
+              <div style={{ display: "inline-flex", gap: "0.5rem", flexWrap: "wrap", justifyContent: "flex-end" }}>
+                {candidateLinkPreviewRequest ? (
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    onClick={() => void resendCandidateLink(candidateLinkPreviewRequest)}
+                    disabled={resendingCandidateLinkRequestId === candidateLinkPreviewRequest._id}
+                    style={{ padding: "0.42rem 0.75rem", fontSize: "0.84rem" }}
+                  >
+                    {resendingCandidateLinkRequestId === candidateLinkPreviewRequest._id
+                      ? "Resending..."
+                      : "Resend Link"}
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => void copyCandidatePortalLink()}
+                  disabled={!candidateLinkEmailPreview.portalUrl.trim()}
+                  style={{ padding: "0.42rem 0.75rem", fontSize: "0.84rem" }}
+                >
+                  Copy Portal Link
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={() => void copyCandidateLinkEmailPreview()}
+                  style={{ padding: "0.42rem 0.75rem", fontSize: "0.84rem" }}
+                >
+                  Copy Email
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {activeReportRequest ? (
         <div
@@ -2715,39 +3545,56 @@ function RequestsPageContent() {
                 </div>
 
                 <div className="grid gap-4 max-h-[36vh] overflow-y-auto pr-2 custom-scrollbar">
-                  {(activeResponseRequest.candidateFormResponses ?? []).map((serviceResponse) => (
+                  {(activeResponseRequest.candidateFormResponses ?? [])
+                    .flatMap((serviceResponse) => {
+                      const serviceEntryCount = resolveServiceResponseEntryCount(serviceResponse);
+
+                      return Array.from({ length: serviceEntryCount }, (_, entryIndex) => {
+                        const serviceEntryNumber = entryIndex + 1;
+
+                        return {
+                          serviceResponse,
+                          entryIndex,
+                          serviceEntryNumber,
+                          serviceDisplayName: formatServiceInstanceName(
+                            serviceResponse.serviceName,
+                            serviceEntryNumber,
+                            serviceEntryCount,
+                          ),
+                        };
+                      });
+                    })
+                    .map((serviceResponseEntry) => (
                     <fieldset
-                      key={`${activeResponseRequest._id}-${serviceResponse.serviceId}`}
+                      key={`${activeResponseRequest._id}-${serviceResponseEntry.serviceResponse.serviceId}-${serviceResponseEntry.serviceEntryNumber}`}
                       className="border border-slate-200 rounded-xl p-4 m-0 grid gap-3 bg-white shadow-sm"
                     >
                       <legend className="font-bold text-slate-800 px-2 text-sm bg-white">
-                        {serviceResponse.serviceName}
+                        {serviceResponseEntry.serviceDisplayName}
                       </legend>
 
-                      {serviceResponse.answers.length === 0 ? (
+                      {serviceResponseEntry.serviceResponse.answers.length === 0 ? (
                         <span className="text-slate-500 text-sm">No answer fields available.</span>
                       ) : (
-                        serviceResponse.answers.map((answer, answerIndex) => {
+                        serviceResponseEntry.serviceResponse.answers.map((answer, answerIndex) => {
                           const fieldKey = buildRejectedFieldKey(
-                            serviceResponse.serviceId,
+                            serviceResponseEntry.serviceResponse.serviceId,
                             answer.question,
                             answer.fieldKey ?? "",
                           );
                           const isChecked = selectedRejectedFieldKeys.includes(fieldKey);
-                          const repeatableValues = parseRepeatableAnswerValues(
-                            answer.value,
-                            answer.repeatable,
-                          );
+                          const answerValueForEntry = getAnswerValueForEntry(
+                            answer,
+                            serviceResponseEntry.entryIndex,
+                          ).trim();
                           const answerPreview =
                             answer.fieldType === "file"
                               ? answer.fileName || "File uploaded"
-                              : repeatableValues.length > 0
-                                ? repeatableValues.join(" | ")
-                                : answer.value || "-";
+                              : answerValueForEntry || "-";
 
                           return (
                             <label
-                              key={`${serviceResponse.serviceId}-${answerIndex}`}
+                              key={`${serviceResponseEntry.serviceResponse.serviceId}-${serviceResponseEntry.serviceEntryNumber}-${answerIndex}`}
                               className="flex gap-3 items-start p-2 rounded-lg hover:bg-slate-50 cursor-pointer transition-colors"
                             >
                               <input

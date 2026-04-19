@@ -152,7 +152,7 @@ const VerificationRequestSchema = new Schema(
         serviceInstanceKey: { type: String, default: "", trim: true },
         status: {
           type: String,
-          enum: ["pending", "verified", "unverified"],
+          enum: ["pending", "in-progress", "verified", "unverified"],
           default: "pending",
         },
         verificationMode: { type: String, default: "" },
@@ -161,7 +161,7 @@ const VerificationRequestSchema = new Schema(
           {
             status: {
               type: String,
-              enum: ["verified", "unverified"],
+              enum: ["in-progress", "verified", "unverified"],
               required: true,
             },
             verificationMode: { type: String, default: "" },

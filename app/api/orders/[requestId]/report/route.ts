@@ -10,6 +10,14 @@ type CustomerAuth = {
   parentCustomerId: string | null;
 };
 
+type ReportAnswer = {
+  question: string;
+  value: string;
+  fieldType: string;
+  fileName: string;
+  fileData: string;
+};
+
 type ReportPayload = {
   reportNumber: string;
   generatedAt: string;
@@ -25,6 +33,7 @@ type ReportPayload = {
   };
   status: string;
   createdAt: string;
+  personalDetails: ReportAnswer[];
   services: Array<{
     serviceId: string;
     serviceEntryIndex: number;
@@ -34,13 +43,7 @@ type ReportPayload = {
     status: string;
     verificationMode: string;
     comment: string;
-    candidateAnswers: Array<{
-      question: string;
-      value: string;
-      fieldType: string;
-      fileName: string;
-      fileData: string;
-    }>;
+    candidateAnswers: ReportAnswer[];
     attempts: Array<{
       attemptedAt: string;
       status: string;
@@ -100,6 +103,10 @@ function toDisplayStatus(value: string) {
     return "-";
   }
 
+  if (normalized === "in-progress") {
+    return "In Progress";
+  }
+
   return `${normalized.charAt(0).toUpperCase()}${normalized.slice(1)}`;
 }
 
@@ -107,6 +114,10 @@ function toDisplayAttemptStatus(value: string) {
   const normalized = value.trim().toLowerCase();
   if (normalized === "verified") {
     return "Verified";
+  }
+
+  if (normalized === "unverified") {
+    return "Unverified";
   }
 
   return "In Progress";
@@ -129,6 +140,318 @@ function sanitizePdfText(value: string) {
   return value
     .replace(/₹/g, "INR ")
     .replace(/[^\u0009\u000A\u000D\u0020-\u00FF]/g, "");
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+
+  return value as Record<string, unknown>;
+}
+
+function asString(value: unknown, fallback = "") {
+  if (typeof value !== "string") {
+    return fallback;
+  }
+
+  return value;
+}
+
+function normalizeQuestionText(value: string) {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, "")
+    .replace(/\s+/g, " ");
+}
+
+function isPersonalDetailsServiceName(serviceName: string) {
+  const normalized = normalizeQuestionText(serviceName);
+  return normalized === "personal details";
+}
+
+function isLikelyPersonalDetailsQuestion(question: string) {
+  const normalized = normalizeQuestionText(question);
+  if (!normalized) {
+    return false;
+  }
+
+  const exactMatches = new Set([
+    "full name",
+    "name",
+    "first name",
+    "middle name",
+    "last name",
+    "email",
+    "email address",
+    "phone",
+    "phone number",
+    "mobile",
+    "mobile number",
+    "date of birth",
+    "dob",
+    "gender",
+    "nationality",
+    "address",
+    "current address",
+    "permanent address",
+    "city",
+    "state",
+    "country",
+    "postal code",
+    "zip code",
+    "pin code",
+    "aadhar",
+    "aadhaar",
+    "pan",
+    "passport number",
+    "driving license number",
+    "resume",
+    "cv",
+    "profile photo",
+  ]);
+
+  if (exactMatches.has(normalized)) {
+    return true;
+  }
+
+  return /\b(name|email|phone|mobile|dob|birth|address|aadhar|aadhaar|pan|passport|resume|cv|photo)\b/.test(
+    normalized,
+  );
+}
+
+function normalizeReportAnswer(value: unknown): ReportAnswer | null {
+  const record = asRecord(value);
+  if (!record) {
+    return null;
+  }
+
+  const question = asString(record.question).trim();
+  const fieldType = asString(record.fieldType, "text").trim() || "text";
+  const answerValue = asString(record.value).trim();
+  const fileName = asString(record.fileName).trim();
+  const fileData = asString(record.fileData).trim();
+
+  if (!question && !answerValue && !fileData && !fileName) {
+    return null;
+  }
+
+  return {
+    question: question || "Field",
+    value: answerValue,
+    fieldType,
+    fileName,
+    fileData,
+  };
+}
+
+function dedupeReportAnswers(answers: ReportAnswer[]) {
+  const seen = new Set<string>();
+  const deduped: ReportAnswer[] = [];
+
+  for (const answer of answers) {
+    const key = [
+      normalizeQuestionText(answer.question),
+      answer.fieldType.trim().toLowerCase(),
+      answer.value.trim().toLowerCase(),
+      answer.fileName.trim().toLowerCase(),
+      answer.fileData.trim().toLowerCase(),
+    ].join("|");
+
+    if (seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    deduped.push(answer);
+  }
+
+  return deduped;
+}
+
+function normalizeServiceAttempts(
+  value: unknown,
+): ReportPayload["services"][number]["attempts"][number] | null {
+  const record = asRecord(value);
+  if (!record) {
+    return null;
+  }
+
+  const attemptedAt = asString(record.attemptedAt).trim();
+  const status = asString(record.status, "in-progress").trim() || "in-progress";
+  const verificationMode =
+    asString(record.verificationMode, "manual").trim() || "manual";
+  const comment = asString(record.comment).trim();
+  const verifierName = asString(record.verifierName).trim();
+  const managerName = asString(record.managerName).trim();
+
+  if (!attemptedAt && !status && !verificationMode && !comment && !verifierName && !managerName) {
+    return null;
+  }
+
+  return {
+    attemptedAt,
+    status,
+    verificationMode,
+    comment,
+    verifierName,
+    managerName,
+  };
+}
+
+function normalizeReportService(
+  value: unknown,
+  serviceIndex: number,
+): ReportPayload["services"][number] | null {
+  const record = asRecord(value);
+  if (!record) {
+    return null;
+  }
+
+  const serviceEntryCountRaw = Number(record.serviceEntryCount);
+  const serviceEntryIndexRaw = Number(record.serviceEntryIndex);
+  const serviceEntryCount =
+    Number.isFinite(serviceEntryCountRaw) && serviceEntryCountRaw > 0
+      ? Math.trunc(serviceEntryCountRaw)
+      : 1;
+  const serviceEntryIndex =
+    Number.isFinite(serviceEntryIndexRaw) && serviceEntryIndexRaw >= 0
+      ? Math.trunc(serviceEntryIndexRaw)
+      : serviceIndex;
+
+  const serviceName = asString(record.serviceName, "Service").trim() || "Service";
+  const serviceId = asString(record.serviceId).trim();
+  const serviceInstanceKey =
+    asString(record.serviceInstanceKey).trim() ||
+    `${serviceId || `service-${serviceIndex}`}-${serviceEntryIndex}-${serviceEntryCount}`;
+  const status = asString(record.status, "in-progress").trim() || "in-progress";
+  const verificationMode =
+    asString(record.verificationMode, "manual").trim() || "manual";
+  const comment = asString(record.comment).trim();
+
+  const candidateAnswers = Array.isArray(record.candidateAnswers)
+    ? record.candidateAnswers
+        .map((entry) => normalizeReportAnswer(entry))
+        .filter((entry): entry is ReportAnswer => Boolean(entry))
+    : [];
+
+  const attempts = Array.isArray(record.attempts)
+    ? record.attempts
+        .map((entry) => normalizeServiceAttempts(entry))
+        .filter(
+          (
+            entry,
+          ): entry is ReportPayload["services"][number]["attempts"][number] => Boolean(entry),
+        )
+    : [];
+
+  if (!serviceName && candidateAnswers.length === 0 && attempts.length === 0) {
+    return null;
+  }
+
+  return {
+    serviceId,
+    serviceEntryIndex,
+    serviceEntryCount,
+    serviceInstanceKey,
+    serviceName,
+    status,
+    verificationMode,
+    comment,
+    candidateAnswers,
+    attempts,
+  };
+}
+
+function splitReportSectionsForRender(
+  services: ReportPayload["services"],
+  personalDetailsSeed: ReportAnswer[],
+) {
+  const personalDetails: ReportAnswer[] = [...personalDetailsSeed];
+  const filteredServices: ReportPayload["services"] = [];
+
+  for (const service of services) {
+    const serviceAnswers = Array.isArray(service.candidateAnswers)
+      ? service.candidateAnswers
+      : [];
+
+    if (isPersonalDetailsServiceName(service.serviceName)) {
+      personalDetails.push(...serviceAnswers);
+      continue;
+    }
+
+    const keptAnswers: ReportAnswer[] = [];
+    for (const answer of serviceAnswers) {
+      if (isLikelyPersonalDetailsQuestion(answer.question)) {
+        personalDetails.push(answer);
+        continue;
+      }
+
+      keptAnswers.push(answer);
+    }
+
+    if (keptAnswers.length === 0 && service.attempts.length === 0) {
+      continue;
+    }
+
+    filteredServices.push({
+      ...service,
+      candidateAnswers: keptAnswers,
+    });
+  }
+
+  const normalizedPersonalDetails = dedupeReportAnswers(personalDetails).sort((first, second) =>
+    normalizeQuestionText(first.question).localeCompare(normalizeQuestionText(second.question)),
+  );
+
+  return {
+    services: filteredServices,
+    personalDetails: normalizedPersonalDetails,
+  };
+}
+
+function normalizeReportPayloadForRender(raw: unknown): ReportPayload | null {
+  const record = asRecord(raw);
+  if (!record) {
+    return null;
+  }
+
+  const candidateRecord = asRecord(record.candidate) ?? {};
+  const companyRecord = asRecord(record.company) ?? {};
+
+  const normalizedServices = Array.isArray(record.services)
+    ? record.services
+        .map((entry, index) => normalizeReportService(entry, index))
+        .filter((entry): entry is ReportPayload["services"][number] => Boolean(entry))
+    : [];
+
+  const personalDetailsSeed = Array.isArray(record.personalDetails)
+    ? record.personalDetails
+        .map((entry) => normalizeReportAnswer(entry))
+        .filter((entry): entry is ReportAnswer => Boolean(entry))
+    : [];
+
+  const splitSections = splitReportSectionsForRender(normalizedServices, personalDetailsSeed);
+
+  return {
+    reportNumber: asString(record.reportNumber, "Verification Report").trim() || "Verification Report",
+    generatedAt: asString(record.generatedAt, "").trim(),
+    generatedByName: asString(record.generatedByName, "").trim(),
+    candidate: {
+      name: asString(candidateRecord.name, "").trim(),
+      email: asString(candidateRecord.email, "").trim(),
+      phone: asString(candidateRecord.phone, "").trim(),
+    },
+    company: {
+      name: asString(companyRecord.name, "").trim(),
+      email: asString(companyRecord.email, "").trim(),
+    },
+    status: asString(record.status, "in-progress").trim() || "in-progress",
+    createdAt: asString(record.createdAt, "").trim(),
+    personalDetails: splitSections.personalDetails,
+    services: splitSections.services,
+  };
 }
 
 function companyIdFromAuth(auth: CustomerAuth) {
@@ -476,6 +799,10 @@ async function buildPdfBuffer(report: ReportPayload) {
       return palette.success;
     }
 
+    if (normalized === "unverified" || normalized === "rejected") {
+      return palette.danger;
+    }
+
     return rgb(0.63, 0.38, 0.03);
   }
 
@@ -607,6 +934,11 @@ async function buildPdfBuffer(report: ReportPayload) {
   drawHorizontalLine(detailsBottomY, contentLeft + 16, contentWidth - 16, palette.lineSoft, 0.9);
   y = detailsBottomY - 22;
 
+  if (report.personalDetails.length > 0) {
+    drawQATable("Personal Details", report.personalDetails);
+    ensureSpace(28);
+  }
+
   page.drawText("Service Verification Summary", {
     x: contentLeft,
     y,
@@ -622,6 +954,131 @@ async function buildPdfBuffer(report: ReportPayload) {
     mode: { x: contentLeft + 214, width: 62 },
     details: { x: contentLeft + 286, width: contentRight - (contentLeft + 286) },
   };
+
+  const qaColumns = {
+    question: { x: contentLeft, width: Math.max(180, Math.round(contentWidth * 0.38)) },
+    value: {
+      x: contentLeft + Math.max(180, Math.round(contentWidth * 0.38)) + 8,
+      width: contentWidth - Math.max(180, Math.round(contentWidth * 0.38)) - 8,
+    },
+  };
+
+  type QATableRowLayout = {
+    questionLines: string[];
+    valueLines: string[];
+    rowHeight: number;
+    lineHeight: number;
+  };
+
+  function buildQATableRowLayout(entry: ReportAnswer): QATableRowLayout {
+    const lineHeight = 12;
+    const questionLines = wrapText(entry.question || "Field", 10.6, qaColumns.question.width, false, "Field");
+    const valueText =
+      entry.fieldType === "file"
+        ? entry.fileName || entry.value || (entry.fileData ? "Attachment" : "-")
+        : entry.value || "-";
+    const valueLines = wrapText(valueText, 10.6, qaColumns.value.width, false, "-");
+    const lineCount = Math.max(questionLines.length, valueLines.length);
+
+    return {
+      questionLines,
+      valueLines,
+      rowHeight: lineCount * lineHeight + 6,
+      lineHeight,
+    };
+  }
+
+  function estimateQATableHeight(entries: ReportAnswer[]) {
+    if (entries.length === 0) {
+      return 0;
+    }
+
+    const rows = entries.map((entry) => buildQATableRowLayout(entry));
+    const rowsHeight = rows.reduce((sum, row) => sum + row.rowHeight + 4, 0);
+    // heading + header + padding
+    return 20 + 22 + rowsHeight + 8;
+  }
+
+  function drawQATable(heading: string, entries: ReportAnswer[]) {
+    if (entries.length === 0) {
+      return;
+    }
+
+    const rows = entries.map((entry) => buildQATableRowLayout(entry));
+
+    const drawHeader = (isContinuation = false) => {
+      ensureSpace(44);
+
+      const titleText = isContinuation ? `${heading} (Continued)` : heading;
+      page.drawText(sanitizePdfText(titleText), {
+        x: contentLeft,
+        y,
+        size: 12,
+        font: boldFont,
+        color: palette.ink,
+      });
+      y -= 15;
+
+      drawHorizontalLine(y, contentLeft, contentWidth, palette.lineStrong, 0.8);
+      const headerY = y - 13;
+      page.drawText("Field", {
+        x: qaColumns.question.x,
+        y: headerY,
+        size: 10.6,
+        font: boldFont,
+        color: palette.ink,
+      });
+      page.drawText("Response", {
+        x: qaColumns.value.x,
+        y: headerY,
+        size: 10.6,
+        font: boldFont,
+        color: palette.ink,
+      });
+      y = headerY - 8;
+      drawHorizontalLine(y, contentLeft, contentWidth, palette.lineSoft, 0.75);
+      y -= 10;
+    };
+
+    if (y - Math.min(estimateQATableHeight(entries), topStartY - bottomLimitY) < bottomLimitY) {
+      addPage();
+    }
+
+    drawHeader(false);
+
+    for (const row of rows) {
+      if (y - (row.rowHeight + 6) < bottomLimitY) {
+        addPage();
+        drawHeader(true);
+      }
+
+      const rowTop = y;
+      drawWrappedLines(
+        row.questionLines,
+        qaColumns.question.x,
+        rowTop,
+        10.6,
+        palette.ink,
+        false,
+        row.lineHeight,
+      );
+      drawWrappedLines(
+        row.valueLines,
+        qaColumns.value.x,
+        rowTop,
+        10.6,
+        palette.ink,
+        false,
+        row.lineHeight,
+      );
+
+      y -= row.rowHeight;
+      drawHorizontalLine(y + 2, contentLeft, contentWidth, rgb(0.7, 0.7, 0.7), 0.55);
+      y -= 4;
+    }
+
+    y -= 8;
+  }
 
   type AttemptRowLayout = {
     attempt: ReportPayload["services"][number]["attempts"][number];
@@ -677,12 +1134,7 @@ async function buildPdfBuffer(report: ReportPayload) {
       : 0;
     const candidateAnswersHeight =
       candidateAnswers.length > 0
-        ?
-            14 +
-            candidateAnswers.reduce((sum, answer) => {
-              const answerText = `${answer.question || "Field"}: ${answer.value || "-"}`;
-              return sum + wrapText(answerText, 10.5, contentWidth, false, "-").length * 12.2 + 3;
-            }, 0)
+        ? estimateQATableHeight(candidateAnswers)
         : 0;
 
     // 22 (heading) + modeHeight + commentHeight + 5 (spacing) + 36 (table header block)
@@ -802,6 +1254,7 @@ async function buildPdfBuffer(report: ReportPayload) {
     service: ReportPayload["services"][number],
     serviceIndex: number,
     isContinuation = false,
+    includeCandidateAnswers = !isContinuation,
   ) {
     const candidateAnswers = Array.isArray(service.candidateAnswers)
       ? service.candidateAnswers
@@ -846,23 +1299,9 @@ async function buildPdfBuffer(report: ReportPayload) {
       y -= commentLines.length * 13;
     }
 
-    if (candidateAnswers.length > 0) {
+    if (includeCandidateAnswers && candidateAnswers.length > 0) {
       y -= 2;
-      page.drawText("Candidate Answers:", {
-        x: contentLeft,
-        y,
-        size: 10.8,
-        font: boldFont,
-        color: palette.ink,
-      });
-      y -= 13;
-
-      for (const answer of candidateAnswers) {
-        const answerText = `${answer.question || "Field"}: ${answer.value || "-"}`;
-        const answerLines = wrapText(answerText, 10.5, contentWidth, false, "-");
-        drawWrappedLines(answerLines, contentLeft, y, 10.5, palette.ink, false, 12.2);
-        y -= answerLines.length * 12.2 + 3;
-      }
+      drawQATable("Candidate Answers", candidateAnswers);
     }
 
     y -= 5;
@@ -879,11 +1318,11 @@ async function buildPdfBuffer(report: ReportPayload) {
       addPage();
     }
 
-    drawServiceIntro(service, serviceIndex, false);
+    drawServiceIntro(service, serviceIndex, false, true);
 
     if (attemptRows.length === 0) {
       if (!keepServiceTogether && ensureSpace(26)) {
-        drawServiceIntro(service, serviceIndex, true);
+        drawServiceIntro(service, serviceIndex, true, false);
       }
 
       page.drawText("No verification attempts were logged for this service.", {
@@ -901,7 +1340,7 @@ async function buildPdfBuffer(report: ReportPayload) {
 
     for (const attemptRow of attemptRows) {
       if (!keepServiceTogether && ensureSpace(attemptRow.rowHeight + 8)) {
-        drawServiceIntro(service, serviceIndex, true);
+        drawServiceIntro(service, serviceIndex, true, false);
       }
 
       const rowTop = y;
@@ -1190,7 +1629,13 @@ export async function GET(
       );
     }
 
-    const reportData = scoped.item.reportData as ReportPayload;
+    const reportData = normalizeReportPayloadForRender(scoped.item.reportData);
+    if (!reportData) {
+      return NextResponse.json(
+        { error: "Stored report data is invalid. Please ask admin to regenerate and share the report." },
+        { status: 500 },
+      );
+    }
 
     const pdfBuffer = await buildPdfBuffer(reportData);
     const pdfBytes = Uint8Array.from(pdfBuffer);

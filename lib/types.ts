@@ -43,7 +43,7 @@ export type MeResponse = {
 
 export type RequestStatus = "pending" | "approved" | "rejected" | "verified";
 
-export type ServiceVerificationStatus = "pending" | "verified" | "unverified";
+export type ServiceVerificationStatus = "pending" | "in-progress" | "verified" | "unverified";
 
 export type ServiceVerificationAttempt = {
   status: Exclude<ServiceVerificationStatus, "pending">;
