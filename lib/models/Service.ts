@@ -8,6 +8,8 @@ export type ServiceFormFieldType =
   | "file"
   | "date"
   | "dropdown"
+  | "email"
+  | "mobile"
   | "composite";
 
 export type ServiceFormSubField = {
@@ -40,7 +42,7 @@ export type CandidateLayoutSnapshotField = {
   fieldKey?: string;
   question: string;
   iconKey?: string;
-  fieldType: "text" | "long_text" | "number" | "file" | "date" | "dropdown";
+  fieldType: "text" | "long_text" | "number" | "file" | "date" | "dropdown" | "email" | "mobile";
   dropdownOptions?: string[];
   required: boolean;
   repeatable?: boolean;
@@ -89,7 +91,7 @@ const serviceSchema = new Schema<IService>(
         iconKey: { type: String, default: "diary" },
         fieldType: {
           type: String,
-          enum: ["text", "long_text", "number", "file", "date", "dropdown", "composite"],
+          enum: ["text", "long_text", "number", "file", "date", "dropdown", "email", "mobile", "composite"],
           required: true,
         },
         subFields: [
@@ -128,7 +130,7 @@ const serviceSchema = new Schema<IService>(
         iconKey: { type: String, default: "diary" },
         fieldType: {
           type: String,
-          enum: ["text", "long_text", "number", "file", "date", "dropdown"],
+          enum: ["text", "long_text", "number", "file", "date", "dropdown", "email", "mobile"],
           required: true,
         },
         dropdownOptions: { type: [String], default: [] },

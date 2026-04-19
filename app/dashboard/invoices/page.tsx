@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { AreaChart, Download, FileText, ReceiptText, TrendingUp, Calendar, FileSearch, X } from "lucide-react";
 import { PortalFrame } from "@/components/dashboard/PortalFrame";
 import { BlockCard, BlockTitle } from "@/components/ui/blocks"; 
+import { MonthPicker } from "@/components/MonthPicker";
 import { usePortalSession } from "@/lib/hooks/usePortalSession";
 import { useRequestsData } from "@/lib/hooks/useRequestsData";
 import { getAlertTone } from "@/lib/alerts";
@@ -1245,13 +1246,10 @@ export default function CustomerInvoicesPage() {
               </div>
               
               <div style={{ position: "relative", marginBottom: "1rem" }}>
-                <input
+                <MonthPicker
                   id="customer-invoice-month-filter"
-                  className="input"
-                  type="month"
                   value={selectedBillingMonth}
-                  onChange={(event) => setSelectedBillingMonth(event.target.value)}
-                  style={{ width: "100%", padding: "0.6rem 0.8rem", borderRadius: "8px", border: "1px solid #CBD5E1", fontSize: "0.9rem" }}
+                  onChange={(value) => setSelectedBillingMonth(value)}
                 />
               </div>
               

@@ -62,7 +62,7 @@ const VerificationRequestSchema = new Schema(
         question: { type: String, required: true },
         fieldType: {
           type: String,
-          enum: ["text", "long_text", "number", "file", "date", "dropdown", "composite"],
+          enum: ["text", "long_text", "number", "file", "date", "dropdown", "email", "mobile", "composite"],
           required: true,
         },
         subFields: [
@@ -96,7 +96,7 @@ const VerificationRequestSchema = new Schema(
             question: { type: String, required: true },
             fieldType: {
               type: String,
-              enum: ["text", "long_text", "number", "file", "date", "dropdown", "composite"],
+              enum: ["text", "long_text", "number", "file", "date", "dropdown", "email", "mobile", "composite"],
               required: true,
             },
             subFields: [

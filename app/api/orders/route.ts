@@ -125,7 +125,7 @@ const DEFAULT_PERSONAL_DETAILS_FORM_FIELDS = [
     fieldKey: "personal_email_address",
     question: "Email address",
     iconKey: "email",
-    fieldType: "text",
+    fieldType: "email",
     required: true,
     repeatable: false,
     minLength: 5,
@@ -2144,6 +2144,8 @@ export async function PATCH(req: NextRequest) {
           | "file"
           | "date"
           | "dropdown"
+          | "email"
+          | "mobile"
           | "composite";
       }
     >();
@@ -2186,6 +2188,8 @@ export async function PATCH(req: NextRequest) {
           | "file"
           | "date"
           | "dropdown"
+          | "email"
+          | "mobile"
           | "composite";
       }
     >();
