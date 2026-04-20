@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import crypto from "node:crypto";
 import nodemailer from "nodemailer";
+import { Types } from "mongoose";
 import { z } from "zod";
 import { getCustomerAuthFromRequest } from "@/lib/auth";
 import { SUPPORTED_CURRENCIES, type SupportedCurrency } from "@/lib/currencies";
@@ -1994,7 +1995,9 @@ export async function PATCH(req: NextRequest) {
     matchingAttempt.extraPaymentApprovalStatus =
       payload.decision === "approve" ? "approved" : "rejected";
     matchingAttempt.extraPaymentApprovalRespondedAt = now;
-    matchingAttempt.extraPaymentApprovalRespondedBy = auth.userId;
+    matchingAttempt.extraPaymentApprovalRespondedBy = Types.ObjectId.isValid(auth.userId)
+      ? new Types.ObjectId(auth.userId)
+      : null;
     matchingAttempt.extraPaymentApprovalRejectionNote =
       payload.decision === "reject"
         ? trimmedRejectionNote || "Rejected by customer."
