@@ -1044,6 +1044,10 @@ function escapeHtml(value: string) {
 function resolveCandidatePortalUrl() {
   const configuredUrl = process.env.CANDIDATE_PORTAL_URL?.trim();
   if (configuredUrl) {
+    if (/vercel\.(app|com)/i.test(configuredUrl)) {
+      return "https://candidate.secure.cluso.in";
+    }
+
     return configuredUrl;
   }
 

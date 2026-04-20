@@ -25,6 +25,10 @@ function escapeHtml(value: string) {
 function resolveCustomerPortalUrl() {
   const configuredUrl = process.env.CUSTOMER_PORTAL_URL?.trim();
   if (configuredUrl) {
+    if (/vercel\.(app|com)/i.test(configuredUrl)) {
+      return "https://enterprise.secure.cluso.in/";
+    }
+
     return configuredUrl;
   }
 
