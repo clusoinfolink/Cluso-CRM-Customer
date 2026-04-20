@@ -6,6 +6,11 @@ import { Providers } from "./providers";
 export const metadata: Metadata = {
   title: "Cluso Enterprise Portal",
   description: "Enterprise portal for candidate verification requests",
+  icons: {
+    icon: "/images/cluso-logo.png",
+    shortcut: "/images/cluso-logo.png",
+    apple: "/images/cluso-logo.png",
+  },
 };
 
 export default function RootLayout({
