@@ -69,6 +69,16 @@ const resendCandidateLinkSchema = z.object({
   requestId: z.string().min(1),
 });
 
+const extraPaymentApprovalDecisionSchema = z.object({
+  action: z.literal("extra-payment-approval-decision"),
+  requestId: z.string().min(1),
+  serviceId: z.string().min(1),
+  serviceEntryIndex: z.number().int().min(1).optional().default(1),
+  attemptedAt: z.string().min(1),
+  decision: z.enum(["approve", "reject"]),
+  rejectionNote: z.string().trim().max(500).optional().default(""),
+});
+
 const ENTERPRISE_REJECTION_WINDOW_MS = 10 * 60 * 1000;
 const MAX_APPEAL_ATTACHMENT_BYTES = 5 * 1024 * 1024;
 const APPEAL_ATTACHMENT_MIME_TYPES = new Set([
@@ -1491,6 +1501,23 @@ export async function GET(req: NextRequest) {
             fileMimeType: answer.fileMimeType ?? "",
             fileSize: answer.fileSize ?? null,
             fileData: answer.fileData ?? "",
+            entryFiles: Array.isArray(answer.entryFiles)
+              ? answer.entryFiles
+                  .map((entryFile) => ({
+                    entryIndex:
+                      typeof entryFile.entryIndex === "number" &&
+                      Number.isFinite(entryFile.entryIndex) &&
+                      entryFile.entryIndex > 0
+                        ? Math.floor(entryFile.entryIndex)
+                        : 1,
+                    fileName: entryFile.fileName ?? "",
+                    fileMimeType: entryFile.fileMimeType ?? "",
+                    fileSize: entryFile.fileSize ?? null,
+                    fileData: entryFile.fileData ?? "",
+                  }))
+                  .filter((entryFile) => Boolean(entryFile.fileData))
+                  .sort((first, second) => first.entryIndex - second.entryIndex)
+              : [],
           })),
         };
       });
@@ -1875,6 +1902,112 @@ export async function PATCH(req: NextRequest) {
       subject: emailContent.subject,
       text: emailContent.text,
       portalUrl,
+    });
+  }
+
+  const extraPaymentApprovalDecisionParsed =
+    extraPaymentApprovalDecisionSchema.safeParse(body);
+  if (extraPaymentApprovalDecisionParsed.success) {
+    const payload = extraPaymentApprovalDecisionParsed.data;
+    const requestFilter: Record<string, unknown> = {
+      ...scopedFilter.filter,
+      _id: payload.requestId,
+    };
+
+    const requestDoc = await VerificationRequest.findOne(requestFilter).select(
+      "serviceVerifications",
+    );
+
+    if (!requestDoc) {
+      return NextResponse.json({ error: "Request not found." }, { status: 404 });
+    }
+
+    const requestedAttemptedAt = new Date(payload.attemptedAt);
+    if (Number.isNaN(requestedAttemptedAt.getTime())) {
+      return NextResponse.json(
+        { error: "Invalid attempt identifier for extra payment approval." },
+        { status: 400 },
+      );
+    }
+
+    const targetServiceEntryIndex =
+      typeof payload.serviceEntryIndex === "number" &&
+      Number.isFinite(payload.serviceEntryIndex) &&
+      payload.serviceEntryIndex > 0
+        ? Math.floor(payload.serviceEntryIndex)
+        : 1;
+
+    const targetService = (requestDoc.serviceVerifications ?? []).find((service) => {
+      const serviceId = String(service.serviceId ?? "").trim();
+      const serviceEntryIndex =
+        typeof service.serviceEntryIndex === "number" &&
+        Number.isFinite(service.serviceEntryIndex) &&
+        service.serviceEntryIndex > 0
+          ? Math.floor(service.serviceEntryIndex)
+          : 1;
+
+      return serviceId === payload.serviceId && serviceEntryIndex === targetServiceEntryIndex;
+    });
+
+    if (!targetService) {
+      return NextResponse.json(
+        { error: "Selected service does not belong to this request." },
+        { status: 404 },
+      );
+    }
+
+    const matchingAttempt = (targetService.attempts ?? []).find((attempt) => {
+      if (!attempt.attemptedAt) {
+        return false;
+      }
+
+      const attemptedAt = new Date(attempt.attemptedAt);
+      if (Number.isNaN(attemptedAt.getTime())) {
+        return false;
+      }
+
+      return attemptedAt.getTime() === requestedAttemptedAt.getTime();
+    });
+
+    if (!matchingAttempt || !matchingAttempt.extraPaymentApprovalRequested) {
+      return NextResponse.json(
+        { error: "Extra payment approval request was not found for this attempt." },
+        { status: 404 },
+      );
+    }
+
+    const currentApprovalStatus = String(
+      matchingAttempt.extraPaymentApprovalStatus ?? "",
+    )
+      .trim()
+      .toLowerCase();
+
+    if (currentApprovalStatus !== "pending") {
+      return NextResponse.json(
+        { error: "This extra payment request has already been decided." },
+        { status: 400 },
+      );
+    }
+
+    const now = new Date();
+    const trimmedRejectionNote = payload.rejectionNote.trim();
+    matchingAttempt.extraPaymentApprovalStatus =
+      payload.decision === "approve" ? "approved" : "rejected";
+    matchingAttempt.extraPaymentApprovalRespondedAt = now;
+    matchingAttempt.extraPaymentApprovalRespondedBy = auth.userId;
+    matchingAttempt.extraPaymentApprovalRejectionNote =
+      payload.decision === "reject"
+        ? trimmedRejectionNote || "Rejected by customer."
+        : "";
+
+    requestDoc.markModified("serviceVerifications");
+    await requestDoc.save();
+
+    return NextResponse.json({
+      message:
+        payload.decision === "approve"
+          ? "Extra payment request approved. Verification team has been notified."
+          : "Extra payment request rejected. Verification team has been notified.",
     });
   }
 

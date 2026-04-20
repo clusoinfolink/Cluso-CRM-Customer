@@ -248,8 +248,43 @@ export async function buildInvoicePdf(payload: InvoicePdfPayload): Promise<Buffe
   const pdfDoc = await PDFDocument.create();
   const pageSize: [number, number] = [595, 842];
   let page = pdfDoc.addPage(pageSize);
-  const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
-  const boldFont = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+  let font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+  let boldFont = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+
+  try {
+    const fontkitModule = await import("@pdf-lib/fontkit");
+    const fontkit =
+      (fontkitModule as { default?: unknown }).default ?? fontkitModule;
+    pdfDoc.registerFontkit(fontkit as any);
+
+    const windowsDir = process.env.WINDIR || "C:\\Windows";
+    const candidateDirs = [
+      path.join(windowsDir, "Fonts"),
+      path.join(process.cwd(), "public", "fonts"),
+    ];
+
+    for (const candidateDir of candidateDirs) {
+      const regularPath = path.join(candidateDir, "calibri.ttf");
+      const boldPath = path.join(candidateDir, "calibrib.ttf");
+
+      if (!fs.existsSync(regularPath)) {
+        continue;
+      }
+
+      const regularBytes = fs.readFileSync(regularPath);
+      const boldBytes = fs.existsSync(boldPath)
+        ? fs.readFileSync(boldPath)
+        : null;
+
+      font = await pdfDoc.embedFont(regularBytes, { subset: true });
+      boldFont = boldBytes
+        ? await pdfDoc.embedFont(boldBytes, { subset: true })
+        : font;
+      break;
+    }
+  } catch {
+    // Keep fallback standard fonts when custom font loading is unavailable.
+  }
 
   let logoImage: unknown = null;
   try {

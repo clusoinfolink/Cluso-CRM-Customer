@@ -51,6 +51,9 @@ type ReportPayload = {
       comment: string;
       verifierName: string;
       managerName: string;
+      respondentName: string;
+      respondentEmail: string;
+      respondentComment: string;
     }>;
   }>;
 };
@@ -168,7 +171,7 @@ function normalizeQuestionText(value: string) {
 
 function isPersonalDetailsServiceName(serviceName: string) {
   const normalized = normalizeQuestionText(serviceName);
-  return normalized === "personal details";
+  return normalized === "personal details" || normalized.includes("personal detail");
 }
 
 function isLikelyPersonalDetailsQuestion(question: string) {
@@ -178,45 +181,23 @@ function isLikelyPersonalDetailsQuestion(question: string) {
   }
 
   const exactMatches = new Set([
+    "full name (as per government id)",
     "full name",
-    "name",
-    "first name",
-    "middle name",
-    "last name",
-    "email",
     "email address",
-    "phone",
-    "phone number",
-    "mobile",
     "mobile number",
     "date of birth",
     "dob",
     "gender",
     "nationality",
-    "address",
-    "current address",
-    "permanent address",
-    "city",
-    "state",
-    "country",
-    "postal code",
-    "zip code",
-    "pin code",
-    "aadhar",
-    "aadhaar",
-    "pan",
-    "passport number",
-    "driving license number",
-    "resume",
-    "cv",
-    "profile photo",
+    "current residential address",
+    "primary government id number",
   ]);
 
   if (exactMatches.has(normalized)) {
     return true;
   }
 
-  return /\b(name|email|phone|mobile|dob|birth|address|aadhar|aadhaar|pan|passport|resume|cv|photo)\b/.test(
+  return /\b(date of birth|dob|nationality|gender|aadhar|aadhaar|pan|passport|government id|residential address)\b/.test(
     normalized,
   );
 }
@@ -285,8 +266,21 @@ function normalizeServiceAttempts(
   const comment = asString(record.comment).trim();
   const verifierName = asString(record.verifierName).trim();
   const managerName = asString(record.managerName).trim();
+  const respondentName = asString(record.respondentName).trim();
+  const respondentEmail = asString(record.respondentEmail).trim();
+  const respondentComment = asString(record.respondentComment).trim();
 
-  if (!attemptedAt && !status && !verificationMode && !comment && !verifierName && !managerName) {
+  if (
+    !attemptedAt &&
+    !status &&
+    !verificationMode &&
+    !comment &&
+    !verifierName &&
+    !managerName &&
+    !respondentName &&
+    !respondentEmail &&
+    !respondentComment
+  ) {
     return null;
   }
 
@@ -297,7 +291,42 @@ function normalizeServiceAttempts(
     comment,
     verifierName,
     managerName,
+    respondentName,
+    respondentEmail,
+    respondentComment,
   };
+}
+
+function dedupeReportAttempts(
+  attempts: ReportPayload["services"][number]["attempts"],
+) {
+  const seen = new Set<string>();
+  const deduped: ReportPayload["services"][number]["attempts"] = [];
+
+  for (const attempt of attempts) {
+    const key = [
+      attempt.attemptedAt,
+      attempt.status,
+      attempt.verificationMode,
+      attempt.comment,
+      attempt.verifierName,
+      attempt.managerName,
+      attempt.respondentName,
+      attempt.respondentEmail,
+      attempt.respondentComment,
+    ]
+      .map((value) => value.trim().toLowerCase())
+      .join("|");
+
+    if (seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    deduped.push(attempt);
+  }
+
+  return deduped;
 }
 
 function normalizeReportService(
@@ -316,15 +345,18 @@ function normalizeReportService(
       ? Math.trunc(serviceEntryCountRaw)
       : 1;
   const serviceEntryIndex =
-    Number.isFinite(serviceEntryIndexRaw) && serviceEntryIndexRaw >= 0
+    Number.isFinite(serviceEntryIndexRaw) && serviceEntryIndexRaw > 0
       ? Math.trunc(serviceEntryIndexRaw)
-      : serviceIndex;
+      : serviceEntryCount > 1
+        ? serviceIndex + 1
+        : 1;
 
   const serviceName = asString(record.serviceName, "Service").trim() || "Service";
   const serviceId = asString(record.serviceId).trim();
+  const fallbackServiceId = serviceId || `service-${serviceIndex + 1}`;
   const serviceInstanceKey =
     asString(record.serviceInstanceKey).trim() ||
-    `${serviceId || `service-${serviceIndex}`}-${serviceEntryIndex}-${serviceEntryCount}`;
+    `${fallbackServiceId}::${serviceEntryIndex}`;
   const status = asString(record.status, "in-progress").trim() || "in-progress";
   const verificationMode =
     asString(record.verificationMode, "manual").trim() || "manual";
@@ -368,10 +400,61 @@ function splitReportSectionsForRender(
   services: ReportPayload["services"],
   personalDetailsSeed: ReportAnswer[],
 ) {
+  const groupedServicesByInstance = new Map<string, ReportPayload["services"][number]>();
+  const orderedInstanceKeys: string[] = [];
+
+  for (let index = 0; index < services.length; index += 1) {
+    const service = services[index];
+    const normalizedServiceId = service.serviceId.trim() || `service-${index + 1}`;
+    const normalizedEntryIndex =
+      Number.isFinite(service.serviceEntryIndex) && service.serviceEntryIndex > 0
+        ? Math.trunc(service.serviceEntryIndex)
+        : 1;
+    const instanceKey =
+      service.serviceInstanceKey.trim() || `${normalizedServiceId}::${normalizedEntryIndex}`;
+
+    const existing = groupedServicesByInstance.get(instanceKey);
+    if (existing) {
+      existing.status = service.status;
+      existing.verificationMode = service.verificationMode;
+      existing.comment = service.comment;
+      existing.serviceEntryCount = Math.max(
+        existing.serviceEntryCount,
+        service.serviceEntryCount,
+      );
+      existing.candidateAnswers = dedupeReportAnswers([
+        ...existing.candidateAnswers,
+        ...service.candidateAnswers,
+      ]);
+      existing.attempts = dedupeReportAttempts([
+        ...existing.attempts,
+        ...service.attempts,
+      ]);
+      continue;
+    }
+
+    orderedInstanceKeys.push(instanceKey);
+    groupedServicesByInstance.set(instanceKey, {
+      ...service,
+      serviceId: normalizedServiceId,
+      serviceEntryIndex: normalizedEntryIndex,
+      serviceEntryCount: Math.max(1, service.serviceEntryCount, normalizedEntryIndex),
+      serviceInstanceKey: instanceKey,
+      candidateAnswers: dedupeReportAnswers(service.candidateAnswers),
+      attempts: dedupeReportAttempts(service.attempts),
+    });
+  }
+
+  const groupedServices = orderedInstanceKeys
+    .map((instanceKey) => groupedServicesByInstance.get(instanceKey))
+    .filter(
+      (service): service is ReportPayload["services"][number] => Boolean(service),
+    );
+
   const personalDetails: ReportAnswer[] = [...personalDetailsSeed];
   const filteredServices: ReportPayload["services"] = [];
 
-  for (const service of services) {
+  for (const service of groupedServices) {
     const serviceAnswers = Array.isArray(service.candidateAnswers)
       ? service.candidateAnswers
       : [];
@@ -553,8 +636,87 @@ async function buildPdfBuffer(report: ReportPayload) {
   const path = await import("path");
 
   const pdfDoc = await PDFDocument.create();
-  const regularFont = await pdfDoc.embedFont(StandardFonts.TimesRoman);
-  const boldFont = await pdfDoc.embedFont(StandardFonts.TimesRomanBold);
+  let regularFont = await pdfDoc.embedFont(StandardFonts.Helvetica);
+  let boldFont = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+
+  try {
+    const fontkitModule = await import("@pdf-lib/fontkit");
+    const fontkit =
+      (fontkitModule as { default?: unknown }).default ?? fontkitModule;
+    pdfDoc.registerFontkit(fontkit as any);
+
+    const windowsDir = process.env.WINDIR || "C:\\Windows";
+    const candidateDirs = [
+      path.join(windowsDir, "Fonts"),
+      path.join(process.cwd(), "public", "fonts"),
+    ];
+
+    const candidateFontFamilies = [
+      {
+        regularFiles: ["Inter-Regular.ttf", "Inter.ttf", "inter.ttf"],
+        boldFiles: ["Inter-Bold.ttf", "Inter-SemiBold.ttf", "interb.ttf"],
+      },
+      {
+        regularFiles: [
+          "PlusJakartaSans-Regular.ttf",
+          "PlusJakartaSans[wght].ttf",
+          "plus-jakarta-sans-regular.ttf",
+        ],
+        boldFiles: [
+          "PlusJakartaSans-Bold.ttf",
+          "PlusJakartaSans-SemiBold.ttf",
+          "plus-jakarta-sans-bold.ttf",
+        ],
+      },
+      {
+        regularFiles: ["segoeui.ttf"],
+        boldFiles: ["segoeuib.ttf"],
+      },
+    ];
+
+    let hasLoadedCustomFont = false;
+
+    for (const candidateDir of candidateDirs) {
+      for (const family of candidateFontFamilies) {
+        let regularBytes: Buffer | null = null;
+        for (const regularFileName of family.regularFiles) {
+          regularBytes = await readFile(
+            path.join(candidateDir, regularFileName),
+          ).catch(() => null);
+          if (regularBytes) {
+            break;
+          }
+        }
+
+        if (!regularBytes) {
+          continue;
+        }
+
+        let boldBytes: Buffer | null = null;
+        for (const boldFileName of family.boldFiles) {
+          boldBytes = await readFile(path.join(candidateDir, boldFileName)).catch(
+            () => null,
+          );
+          if (boldBytes) {
+            break;
+          }
+        }
+
+        regularFont = await pdfDoc.embedFont(regularBytes, { subset: true });
+        boldFont = boldBytes
+          ? await pdfDoc.embedFont(boldBytes, { subset: true })
+          : regularFont;
+        hasLoadedCustomFont = true;
+        break;
+      }
+
+      if (hasLoadedCustomFont) {
+        break;
+      }
+    }
+  } catch {
+    // Keep fallback standard fonts when custom font loading is unavailable.
+  }
 
   const pageWidth = 595.28;
   const pageHeight = 841.89;
@@ -811,22 +973,16 @@ async function buildPdfBuffer(report: ReportPayload) {
   const logoBoxHeight = 170;
   const logoBoxY = pageHeight - 245;
 
-  page.drawRectangle({
-    x: logoBoxX,
-    y: logoBoxY,
-    width: logoBoxWidth,
-    height: logoBoxHeight,
-    borderColor: palette.lineSoft,
-    borderWidth: 0.8,
-  });
-
   if (logoImage) {
     const logoFit = logoImage.scaleToFit(logoBoxWidth - 20, logoBoxHeight - 20);
+    const logoScale = 0.85;
+    const logoWidth = logoFit.width * logoScale;
+    const logoHeight = logoFit.height * logoScale;
     page.drawImage(logoImage, {
-      x: logoBoxX + (logoBoxWidth - logoFit.width) / 2,
-      y: logoBoxY + (logoBoxHeight - logoFit.height) / 2,
-      width: logoFit.width,
-      height: logoFit.height,
+      x: logoBoxX + (logoBoxWidth - logoWidth) / 2,
+      y: logoBoxY + (logoBoxHeight - logoHeight) / 2,
+      width: logoWidth,
+      height: logoHeight,
     });
   } else {
     const fallbackText = "Cluso-Infolink";
@@ -886,67 +1042,62 @@ async function buildPdfBuffer(report: ReportPayload) {
 
   y = summaryY - 28;
 
-  const columnGap = 20;
-  const detailsColumnWidth = (contentWidth - columnGap) / 2;
-  const leftColumnX = contentLeft;
-  const rightColumnX = contentLeft + detailsColumnWidth + columnGap;
-  const detailsHeadingY = y;
+  function drawCandidateAndCompanyDetails(startY: number) {
+    const columnGap = 20;
+    const detailsColumnWidth = (contentWidth - columnGap) / 2;
+    const leftColumnX = contentLeft;
+    const rightColumnX = contentLeft + detailsColumnWidth + columnGap;
+    const detailsHeadingY = startY;
 
-  page.drawText("Candidate Details", {
-    x: leftColumnX,
-    y: detailsHeadingY,
-    size: 12,
-    font: boldFont,
-    color: palette.headingBlue,
-  });
-  page.drawText("Company Details", {
-    x: rightColumnX,
-    y: detailsHeadingY,
-    size: 12,
-    font: boldFont,
-    color: palette.headingBlue,
-  });
+    page.drawText("Candidate Details", {
+      x: leftColumnX,
+      y: detailsHeadingY,
+      size: 12,
+      font: boldFont,
+      color: palette.headingBlue,
+    });
+    page.drawText("Company Details", {
+      x: rightColumnX,
+      y: detailsHeadingY,
+      size: 12,
+      font: boldFont,
+      color: palette.headingBlue,
+    });
 
-  const detailsLineHeight = 16;
-  const leftDetails = [
-    { label: "Name:", value: report.candidate.name || "-" },
-    { label: "Email:", value: report.candidate.email || "-" },
-    { label: "Phone:", value: report.candidate.phone || "-" },
-  ];
-  const rightDetails = [
-    { label: "Company:", value: report.company.name || "-" },
-    { label: "Email:", value: report.company.email || "-" },
-  ];
+    const detailsLineHeight = 16;
+    const leftDetails = [
+      { label: "Name:", value: report.candidate.name || "-" },
+      { label: "Email:", value: report.candidate.email || "-" },
+      { label: "Phone:", value: report.candidate.phone || "-" },
+    ];
+    const rightDetails = [
+      { label: "Company:", value: report.company.name || "-" },
+      { label: "Email:", value: report.company.email || "-" },
+    ];
 
-  let leftDetailY = detailsHeadingY - 22;
-  for (const entry of leftDetails) {
-    drawLabelValue(leftColumnX, leftDetailY, entry.label, entry.value, palette.ink, 11);
-    leftDetailY -= detailsLineHeight;
+    let leftDetailY = detailsHeadingY - 22;
+    for (const entry of leftDetails) {
+      drawLabelValue(leftColumnX, leftDetailY, entry.label, entry.value, palette.ink, 11);
+      leftDetailY -= detailsLineHeight;
+    }
+
+    let rightDetailY = detailsHeadingY - 22;
+    for (const entry of rightDetails) {
+      drawLabelValue(rightColumnX, rightDetailY, entry.label, entry.value, palette.ink, 11);
+      rightDetailY -= detailsLineHeight;
+    }
+
+    const detailsBottomY = Math.min(leftDetailY, rightDetailY) - 10;
+    drawHorizontalLine(detailsBottomY, contentLeft + 16, contentWidth - 16, palette.lineSoft, 0.9);
+    return detailsBottomY - 22;
   }
 
-  let rightDetailY = detailsHeadingY - 22;
-  for (const entry of rightDetails) {
-    drawLabelValue(rightColumnX, rightDetailY, entry.label, entry.value, palette.ink, 11);
-    rightDetailY -= detailsLineHeight;
-  }
-
-  const detailsBottomY = Math.min(leftDetailY, rightDetailY) - 10;
-  drawHorizontalLine(detailsBottomY, contentLeft + 16, contentWidth - 16, palette.lineSoft, 0.9);
-  y = detailsBottomY - 22;
+  y = drawCandidateAndCompanyDetails(y);
 
   if (report.personalDetails.length > 0) {
     drawQATable("Personal Details", report.personalDetails);
     ensureSpace(28);
   }
-
-  page.drawText("Service Verification Summary", {
-    x: contentLeft,
-    y,
-    size: 15,
-    font: boldFont,
-    color: palette.headingBlue,
-  });
-  y -= 28;
 
   const tableColumns = {
     dateTime: { x: contentLeft, width: 130 },
@@ -1103,6 +1254,9 @@ async function buildPdfBuffer(report: ReportPayload) {
         attempt.comment,
         attempt.verifierName,
         attempt.managerName,
+        attempt.respondentName,
+        attempt.respondentEmail,
+        attempt.respondentComment,
       ]
         .map((value) => sanitizePdfText(String(value ?? "")).trim())
         .join("|");
@@ -1167,10 +1321,22 @@ async function buildPdfBuffer(report: ReportPayload) {
       "-",
     );
 
-    const detailParts = [
-      `Verifier: ${attempt.verifierName || "-"}`,
-      `Manager: ${attempt.managerName || "-"}`,
-    ];
+    const detailParts: string[] = [];
+    if (attempt.verifierName?.trim()) {
+      detailParts.push(`Verifier: ${attempt.verifierName.trim()}`);
+    }
+    if (attempt.managerName?.trim()) {
+      detailParts.push(`Manager: ${attempt.managerName.trim()}`);
+    }
+    if (attempt.respondentName?.trim()) {
+      detailParts.push(`Respondent Name: ${attempt.respondentName.trim()}`);
+    }
+    if (attempt.respondentEmail?.trim()) {
+      detailParts.push(`Respondent Email: ${attempt.respondentEmail.trim()}`);
+    }
+    if (attempt.respondentComment?.trim()) {
+      detailParts.push(`Respondent Comment: ${attempt.respondentComment.trim()}`);
+    }
     if (attempt.comment?.trim()) {
       detailParts.push(`Note: ${attempt.comment.trim()}`);
     }
@@ -1308,13 +1474,55 @@ async function buildPdfBuffer(report: ReportPayload) {
     drawServiceTableHeader();
   }
 
+  if (report.services.length > 0) {
+    const firstService = report.services[0];
+    const firstAttempts = dedupeAttempts(firstService.attempts).slice().reverse();
+    const firstAttemptRows = firstAttempts.map((attempt) =>
+      buildAttemptRowLayout(firstService, attempt),
+    );
+    const firstServiceBlockHeight = estimateServiceBlockHeight(
+      firstService,
+      firstAttemptRows,
+    );
+    const headingAndFirstBlockHeight =
+      Math.min(maxServiceBlockHeight, firstServiceBlockHeight) + 28;
+    ensureSpace(headingAndFirstBlockHeight);
+  } else {
+    ensureSpace(36);
+  }
+
+  page.drawText("Service Verification Summary", {
+    x: contentLeft,
+    y,
+    size: 15,
+    font: boldFont,
+    color: palette.headingBlue,
+  });
+  y -= 28;
+
   report.services.forEach((service, serviceIndex) => {
     const attempts = dedupeAttempts(service.attempts).slice().reverse();
     const attemptRows = attempts.map((attempt) => buildAttemptRowLayout(service, attempt));
     const serviceBlockHeight = estimateServiceBlockHeight(service, attemptRows);
     const keepServiceTogether = serviceBlockHeight <= maxServiceBlockHeight;
+    const serviceIntroHeight = Math.min(
+      estimateServiceIntroHeight(service) + 10,
+      maxServiceBlockHeight,
+    );
+    const minimumTrailingHeight =
+      attemptRows.length > 0
+        ? attemptRows[0].rowHeight + 8
+        : 26;
+    const minimumChunkHeight = Math.min(
+      maxServiceBlockHeight,
+      serviceIntroHeight + minimumTrailingHeight,
+    );
 
     if (keepServiceTogether && y - serviceBlockHeight < bottomLimitY) {
+      addPage();
+    }
+
+    if (!keepServiceTogether && y - minimumChunkHeight < bottomLimitY) {
       addPage();
     }
 

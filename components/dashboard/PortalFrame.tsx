@@ -68,7 +68,59 @@ async function fetchRequestsForNotifications() {
   return data.items ?? [];
 }
 
+function normalizeExtraPaymentApprovalStatus(value: unknown) {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  if (
+    normalized === "not-requested" ||
+    normalized === "pending" ||
+    normalized === "approved" ||
+    normalized === "rejected"
+  ) {
+    return normalized;
+  }
+
+  return "not-requested";
+}
+
+function getPendingExtraPaymentApprovalSummary(item: RequestItem) {
+  let count = 0;
+  let latestRequestedAtMs = 0;
+
+  for (const service of item.serviceVerifications ?? []) {
+    for (const attempt of service.attempts ?? []) {
+      const approvalStatus = normalizeExtraPaymentApprovalStatus(
+        attempt.extraPaymentApprovalStatus,
+      );
+      const hasPendingApproval =
+        Boolean(attempt.extraPaymentApprovalRequested) && approvalStatus === "pending";
+
+      if (!hasPendingApproval) {
+        continue;
+      }
+
+      count += 1;
+      const attemptedAtMs = Date.parse(attempt.attemptedAt || "");
+      if (!Number.isNaN(attemptedAtMs)) {
+        latestRequestedAtMs = Math.max(latestRequestedAtMs, attemptedAtMs);
+      }
+    }
+  }
+
+  return { count, latestRequestedAtMs };
+}
+
 function getCustomerNotificationContent(item: RequestItem) {
+  const pendingApprovalSummary = getPendingExtraPaymentApprovalSummary(item);
+  if (pendingApprovalSummary.count > 0) {
+    return {
+      title: "Extra payment approval required",
+      detail:
+        pendingApprovalSummary.count === 1
+          ? `${item.candidateName} has 1 extra payment request waiting for your approval`
+          : `${item.candidateName} has ${pendingApprovalSummary.count} extra payment requests waiting for your approval`,
+    };
+  }
+
   const appeal = item.reverificationAppeal;
   if (appeal) {
     const appealedServiceNames = (appeal.services ?? [])
@@ -192,6 +244,7 @@ export function PortalFrame({ me, onLogout, title, subtitle, children }: PortalF
 
     return (requestsQuery.data ?? [])
       .map((item) => {
+        const pendingApprovalSummary = getPendingExtraPaymentApprovalSummary(item);
         const parsedCreatedAt = Date.parse(item.createdAt);
         const requestCreatedAtMs = Number.isNaN(parsedCreatedAt) ? 0 : parsedCreatedAt;
         const parsedAppealEventAt =
@@ -200,14 +253,23 @@ export function PortalFrame({ me, onLogout, title, subtitle, children }: PortalF
             : item.reverificationAppeal?.status === "resolved"
               ? Date.parse(item.reverificationAppeal.resolvedAt || item.reportMetadata?.customerSharedAt || "")
               : Number.NaN;
-        const createdAtMs = Number.isNaN(parsedAppealEventAt) ? requestCreatedAtMs : parsedAppealEventAt;
+        const createdAtMs =
+          pendingApprovalSummary.latestRequestedAtMs > 0
+            ? pendingApprovalSummary.latestRequestedAtMs
+            : Number.isNaN(parsedAppealEventAt)
+              ? requestCreatedAtMs
+              : parsedAppealEventAt;
         const content = getCustomerNotificationContent(item);
         const appealKey = item.reverificationAppeal
           ? `${item.reverificationAppeal.status}:${item.reverificationAppeal.submittedAt}:${item.reverificationAppeal.resolvedAt ?? ""}:${item.reportMetadata?.customerSharedAt ?? ""}`
           : "none";
+        const paymentApprovalKey =
+          pendingApprovalSummary.count > 0
+            ? `${pendingApprovalSummary.count}:${pendingApprovalSummary.latestRequestedAtMs}`
+            : "none";
 
         return {
-          id: `${item._id}:${item.status}:${appealKey}`,
+          id: `${item._id}:${item.status}:${appealKey}:payment-${paymentApprovalKey}`,
           requestId: item._id,
           title: content.title,
           detail: content.detail,

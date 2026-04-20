@@ -44,12 +44,29 @@ export type MeResponse = {
 export type RequestStatus = "pending" | "approved" | "rejected" | "verified";
 
 export type ServiceVerificationStatus = "pending" | "in-progress" | "verified" | "unverified";
+export type ExtraPaymentApprovalStatus =
+  | "not-requested"
+  | "pending"
+  | "approved"
+  | "rejected";
 
 export type ServiceVerificationAttempt = {
   status: Exclude<ServiceVerificationStatus, "pending">;
   verificationMode: string;
   comment: string;
   verifierNote?: string;
+  respondentName?: string;
+  respondentEmail?: string;
+  respondentComment?: string;
+  extraPaymentDone?: boolean;
+  extraPaymentAmount?: number | null;
+  extraPaymentApprovalRequested?: boolean;
+  extraPaymentApprovalStatus?: ExtraPaymentApprovalStatus;
+  extraPaymentApprovalRequestedAt?: string | null;
+  extraPaymentApprovalRequestedBy?: string | null;
+  extraPaymentApprovalRespondedAt?: string | null;
+  extraPaymentApprovalRespondedBy?: string | null;
+  extraPaymentApprovalRejectionNote?: string;
   attemptedAt: string;
   verifierId?: string | null;
   verifierName?: string;
@@ -188,6 +205,13 @@ export type RequestItem = {
       fileMimeType?: string;
       fileSize?: number | null;
       fileData?: string;
+      entryFiles?: Array<{
+        entryIndex: number;
+        fileName?: string;
+        fileMimeType?: string;
+        fileSize?: number | null;
+        fileData?: string;
+      }>;
     }>;
   }>;
   createdAt: string;

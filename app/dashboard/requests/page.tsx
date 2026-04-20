@@ -200,6 +200,9 @@ type ReportPreviewAttempt = {
   comment: string;
   verifierName: string;
   managerName: string;
+  respondentName: string;
+  respondentEmail: string;
+  respondentComment: string;
 };
 
 type ReportPreviewCandidateAnswer = {
@@ -389,7 +392,11 @@ const PERSONAL_DETAILS_QUESTION_ORDER = new Map(
 );
 
 function normalizeQuestionKey(value: string) {
-  return value.trim().toLowerCase().replace(/\s+/g, " ");
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, "")
+    .replace(/\s+/g, " ");
 }
 
 function normalizePositiveInteger(value: unknown, fallback = 1) {
@@ -436,47 +443,146 @@ function normalizePreviewAnswer(
 }
 
 function isPersonalDetailsServiceName(serviceName: string) {
-  return normalizeQuestionKey(serviceName) === PERSONAL_DETAILS_SERVICE_NAME;
+  const normalizedServiceName = normalizeQuestionKey(serviceName);
+  return (
+    normalizedServiceName === PERSONAL_DETAILS_SERVICE_NAME ||
+    normalizedServiceName.includes("personal detail")
+  );
 }
 
 function isLikelyPersonalDetailsQuestion(question: string) {
-  return PERSONAL_DETAILS_QUESTION_ORDER.has(normalizeQuestionKey(question));
+  const normalizedQuestion = normalizeQuestionKey(question);
+  if (!normalizedQuestion) {
+    return false;
+  }
+
+  if (PERSONAL_DETAILS_QUESTION_ORDER.has(normalizedQuestion)) {
+    return true;
+  }
+
+  const looseQuestion = normalizedQuestion.replace(/[^a-z0-9\s]/g, " ");
+  return /\b(date of birth|dob|nationality|gender|aadhar|aadhaar|pan|passport|government id|residential address)\b/.test(
+    looseQuestion,
+  );
 }
 
 function dedupePersonalDetailsAnswers(
   answers: ReportPreviewCandidateAnswer[],
 ): ReportPreviewPersonalDetail[] {
-  const dedupedByQuestion = new Map<string, ReportPreviewPersonalDetail>();
+  const deduped = new Map<string, ReportPreviewPersonalDetail>();
 
   for (const rawAnswer of answers) {
     const answer = normalizePreviewAnswer(rawAnswer);
-    const key = normalizeQuestionKey(answer.question);
+    const key = [
+      normalizeQuestionKey(answer.question),
+      answer.fieldType.trim().toLowerCase(),
+      answer.value.trim().toLowerCase(),
+      answer.fileName.trim().toLowerCase(),
+      answer.fileData.trim().toLowerCase(),
+    ].join("|");
     if (!key) {
       continue;
     }
 
-    const existing = dedupedByQuestion.get(key);
-    if (!existing) {
-      dedupedByQuestion.set(key, answer);
-      continue;
-    }
-
-    if ((existing.value === "-" || !existing.value.trim()) && answer.value !== "-") {
-      dedupedByQuestion.set(key, answer);
+    if (!deduped.has(key)) {
+      deduped.set(key, answer);
     }
   }
 
-  return Array.from(dedupedByQuestion.values()).sort((first, second) => {
-    const firstKey = normalizeQuestionKey(first.question);
-    const secondKey = normalizeQuestionKey(second.question);
-    const firstRank = PERSONAL_DETAILS_QUESTION_ORDER.get(firstKey) ?? Number.MAX_SAFE_INTEGER;
-    const secondRank = PERSONAL_DETAILS_QUESTION_ORDER.get(secondKey) ?? Number.MAX_SAFE_INTEGER;
-    if (firstRank !== secondRank) {
-      return firstRank - secondRank;
+  return Array.from(deduped.values()).sort((first, second) =>
+    normalizeQuestionKey(first.question).localeCompare(
+      normalizeQuestionKey(second.question),
+    ),
+  );
+}
+
+function dedupeReportPreviewAttempts(attempts: ReportPreviewAttempt[]) {
+  const seen = new Set<string>();
+  const deduped: ReportPreviewAttempt[] = [];
+
+  for (const attempt of attempts) {
+    const key = [
+      attempt.attemptedAt,
+      attempt.status,
+      attempt.verificationMode,
+      attempt.comment,
+      attempt.verifierName,
+      attempt.managerName,
+      attempt.respondentName,
+      attempt.respondentEmail,
+      attempt.respondentComment,
+    ]
+      .map((value) => value.trim().toLowerCase())
+      .join("|");
+
+    if (seen.has(key)) {
+      continue;
     }
 
-    return firstKey.localeCompare(secondKey);
-  });
+    seen.add(key);
+    deduped.push(attempt);
+  }
+
+  return deduped;
+}
+
+function groupReportServicesForRender(services: ReportPreviewService[]) {
+  const groupedByKey = new Map<string, ReportPreviewService>();
+  const orderedKeys: string[] = [];
+
+  for (let index = 0; index < services.length; index += 1) {
+    const service = services[index];
+    const serviceEntryIndex = normalizePositiveInteger(service.serviceEntryIndex, 1);
+    const baseServiceId = (service.serviceId || `service-${index + 1}`).trim();
+    const instanceKey =
+      service.serviceInstanceKey.trim() ||
+      buildServiceInstanceKey(baseServiceId, serviceEntryIndex);
+
+    const mappedAnswers = (service.candidateAnswers ?? []).map((answer) =>
+      normalizePreviewAnswer(answer),
+    );
+    const mappedAttempts = dedupeReportPreviewAttempts(service.attempts ?? []);
+
+    const existing = groupedByKey.get(instanceKey);
+    if (existing) {
+      existing.status = service.status;
+      existing.verificationMode = service.verificationMode;
+      existing.comment = service.comment;
+      existing.serviceEntryCount = Math.max(
+        normalizePositiveInteger(existing.serviceEntryCount, 1),
+        normalizePositiveInteger(service.serviceEntryCount, 1),
+      );
+      existing.candidateAnswers = dedupePersonalDetailsAnswers([
+        ...existing.candidateAnswers,
+        ...mappedAnswers,
+      ]);
+      existing.attempts = dedupeReportPreviewAttempts([
+        ...existing.attempts,
+        ...mappedAttempts,
+      ]);
+      continue;
+    }
+
+    orderedKeys.push(instanceKey);
+    groupedByKey.set(instanceKey, {
+      ...service,
+      serviceId: baseServiceId,
+      serviceEntryIndex,
+      serviceEntryCount: Math.max(
+        1,
+        normalizePositiveInteger(service.serviceEntryCount, 1),
+        serviceEntryIndex,
+      ),
+      serviceInstanceKey: instanceKey,
+      serviceName: service.serviceName || "Service",
+      candidateAnswers: mappedAnswers,
+      attempts: mappedAttempts,
+    });
+  }
+
+  return orderedKeys
+    .map((instanceKey) => groupedByKey.get(instanceKey))
+    .filter((service): service is ReportPreviewService => Boolean(service));
 }
 
 function splitReportSections(
@@ -485,25 +591,39 @@ function splitReportSections(
   services: ReportPreviewService[];
   personalDetails: ReportPreviewPersonalDetail[];
 } {
+  const groupedServices = groupReportServicesForRender(services);
   const filteredServices: ReportPreviewService[] = [];
   const personalDetails: ReportPreviewPersonalDetail[] = [];
 
-  for (const service of services) {
+  for (const service of groupedServices) {
     const answers = (service.candidateAnswers ?? []).map((answer) =>
       normalizePreviewAnswer(answer),
     );
-    const looksLikePersonalDetails =
-      answers.length > 0 && answers.every((answer) => isLikelyPersonalDetailsQuestion(answer.question));
 
-    if (isPersonalDetailsServiceName(service.serviceName) || looksLikePersonalDetails) {
+    if (isPersonalDetailsServiceName(service.serviceName)) {
       personalDetails.push(...answers);
+      continue;
+    }
+
+    const keptAnswers: ReportPreviewCandidateAnswer[] = [];
+    for (const answer of answers) {
+      if (isLikelyPersonalDetailsQuestion(answer.question)) {
+        personalDetails.push(answer);
+        continue;
+      }
+
+      keptAnswers.push(answer);
+    }
+
+    if (keptAnswers.length === 0 && (service.attempts ?? []).length === 0) {
       continue;
     }
 
     filteredServices.push({
       ...service,
       serviceName: service.serviceName || "Service",
-      candidateAnswers: answers,
+      candidateAnswers: keptAnswers,
+      attempts: dedupeReportPreviewAttempts(service.attempts ?? []),
     });
   }
 
@@ -548,25 +668,34 @@ function parseStoredReportData(
     );
 
   const services = (Array.isArray(root.services) ? root.services : [])
-    .map((serviceEntry) => {
+    .map((serviceEntry, serviceIndex) => {
       const service = asRecord(serviceEntry);
       if (!service) {
         return null;
       }
 
       const serviceId = asString(service.serviceId);
-      const serviceEntryIndex = normalizePositiveInteger(
-        service.serviceEntryIndex,
-        1,
-      );
+      const serviceEntryCountRaw = Number(service.serviceEntryCount);
+      const normalizedEntryCount =
+        Number.isFinite(serviceEntryCountRaw) && serviceEntryCountRaw > 0
+          ? Math.trunc(serviceEntryCountRaw)
+          : 1;
+      const serviceEntryIndexRaw = Number(service.serviceEntryIndex);
+      const serviceEntryIndex =
+        Number.isFinite(serviceEntryIndexRaw) && serviceEntryIndexRaw > 0
+          ? Math.trunc(serviceEntryIndexRaw)
+          : normalizedEntryCount > 1
+            ? serviceIndex + 1
+            : 1;
       const serviceEntryCount = Math.max(
         1,
-        normalizePositiveInteger(service.serviceEntryCount, 1),
+        normalizedEntryCount,
         serviceEntryIndex,
       );
+      const fallbackServiceId = serviceId || `service-${serviceIndex + 1}`;
       const serviceInstanceKey =
         asString(service.serviceInstanceKey) ||
-        (serviceId ? buildServiceInstanceKey(serviceId, serviceEntryIndex) : "");
+        buildServiceInstanceKey(fallbackServiceId, serviceEntryIndex);
 
       const candidateAnswers = (
         Array.isArray(service.candidateAnswers) ? service.candidateAnswers : []
@@ -605,6 +734,9 @@ function parseStoredReportData(
             comment: asString(attempt.comment),
             verifierName: asString(attempt.verifierName),
             managerName: asString(attempt.managerName),
+            respondentName: asString(attempt.respondentName),
+            respondentEmail: asString(attempt.respondentEmail),
+            respondentComment: asString(attempt.respondentComment),
           } satisfies ReportPreviewAttempt;
         })
         .filter((attempt): attempt is ReportPreviewAttempt => Boolean(attempt));
@@ -672,6 +804,33 @@ function getAnswerValueForEntry(answer: CandidateServiceAnswer, entryIndex: numb
   return repeatableValues[entryIndex] ?? "";
 }
 
+function resolveAnswerFileForEntry(answer: CandidateServiceAnswer, entryIndex: number) {
+  const serviceEntryNumber = entryIndex + 1;
+  const entryFile = (answer.entryFiles ?? [])
+    .map((candidateEntryFile) => ({
+      entryIndex: normalizePositiveInteger(candidateEntryFile.entryIndex, 1),
+      fileName: (candidateEntryFile.fileName ?? "").trim(),
+      fileData: (candidateEntryFile.fileData ?? "").trim(),
+    }))
+    .find(
+      (candidateEntryFile) =>
+        candidateEntryFile.entryIndex === serviceEntryNumber &&
+        Boolean(candidateEntryFile.fileData),
+    );
+
+  if (entryFile) {
+    return {
+      fileName: entryFile.fileName,
+      fileData: entryFile.fileData,
+    };
+  }
+
+  return {
+    fileName: (answer.fileName ?? "").trim(),
+    fileData: (answer.fileData ?? "").trim(),
+  };
+}
+
 function buildCandidateAnswersByServiceInstance(item: RequestItem) {
   const answersByServiceInstance = new Map<string, ReportPreviewCandidateAnswer[]>();
 
@@ -687,8 +846,9 @@ function buildCandidateAnswersByServiceInstance(item: RequestItem) {
       const serviceInstanceKey = buildServiceInstanceKey(serviceId, serviceEntryNumber);
       const answers = serviceResponse.answers.map((answer) => {
         const fieldType = answer.fieldType;
-        const fileName = answer.fileName ?? "";
-        const fileData = answer.fileData ?? "";
+        const resolvedFile = resolveAnswerFileForEntry(answer, entryIndex);
+        const fileName = resolvedFile.fileName;
+        const fileData = resolvedFile.fileData;
         const value =
           fieldType === "file" && fileData
             ? fileName || "Attachment"
@@ -710,10 +870,102 @@ function buildCandidateAnswersByServiceInstance(item: RequestItem) {
   return answersByServiceInstance;
 }
 
+function buildPersonalDetailsFromCandidateResponses(item: RequestItem) {
+  const personalDetails: ReportPreviewCandidateAnswer[] = [];
+
+  for (const serviceResponse of item.candidateFormResponses ?? []) {
+    const isPersonalDetailsSection = isPersonalDetailsServiceName(
+      serviceResponse.serviceName ?? "",
+    );
+    const serviceEntryCount = resolveServiceResponseEntryCount(serviceResponse);
+
+    for (let entryIndex = 0; entryIndex < serviceEntryCount; entryIndex += 1) {
+      for (const answer of serviceResponse.answers) {
+        const fieldType = answer.fieldType;
+        const resolvedFile = resolveAnswerFileForEntry(answer, entryIndex);
+        const fileName = resolvedFile.fileName;
+        const fileData = resolvedFile.fileData;
+        const value =
+          fieldType === "file" && fileData
+            ? fileName || "Attachment"
+            : getAnswerValueForEntry(answer, entryIndex).trim() || "-";
+
+        const normalizedAnswer = normalizePreviewAnswer({
+          question: answer.question || "Field",
+          value,
+          fieldType,
+          fileName,
+          fileData,
+        });
+
+        if (
+          isPersonalDetailsSection ||
+          isLikelyPersonalDetailsQuestion(normalizedAnswer.question)
+        ) {
+          personalDetails.push(normalizedAnswer);
+        }
+      }
+    }
+  }
+
+  return dedupePersonalDetailsAnswers(personalDetails);
+}
+
 function buildReportPreviewData(item: RequestItem, viewerName: string) {
   const stored = parseStoredReportData(item.reportData);
+  const hasSharedReport =
+    Boolean(item.reportData) && Boolean(item.reportMetadata?.customerSharedAt);
+
+  if (hasSharedReport && stored) {
+    const services = splitReportSections(stored.services).services;
+    const personalDetails =
+      stored.personalDetails.length > 0
+        ? dedupePersonalDetailsAnswers(stored.personalDetails)
+        : splitReportSections(stored.services).personalDetails;
+    const latestAttempt = services
+      .flatMap((service) => service.attempts)
+      .slice()
+      .sort(
+        (first, second) =>
+          new Date(second.attemptedAt || 0).getTime() -
+          new Date(first.attemptedAt || 0).getTime(),
+      )[0];
+
+    const generatedByName =
+      stored.generatedByName ||
+      item.reportMetadata?.generatedByName ||
+      viewerName ||
+      "Unknown";
+
+    return {
+      reportNumber: stored.reportNumber || `RPT-${item._id.slice(-8).toUpperCase()}`,
+      generatedAt: stored.generatedAt || item.reportMetadata?.generatedAt || item.createdAt,
+      generatedByName,
+      candidate: {
+        name: stored.candidate.name || "-",
+        email: stored.candidate.email || "-",
+        phone: stored.candidate.phone || "-",
+      },
+      company: {
+        name: stored.company.name || "-",
+        email: stored.company.email || "-",
+      },
+      status: stored.status || item.status,
+      createdAt: stored.createdAt || item.createdAt,
+      personalDetails,
+      services,
+      createdByName: generatedByName,
+      verifiedByName:
+        latestAttempt?.managerName ||
+        latestAttempt?.verifierName ||
+        generatedByName,
+    } satisfies ReportPreviewData;
+  }
+
   const candidateAnswersByServiceInstance =
     buildCandidateAnswersByServiceInstance(item);
+  const personalDetailsFromCandidateResponses =
+    buildPersonalDetailsFromCandidateResponses(item);
 
   const fallbackServices: ReportPreviewService[] =
     item.serviceVerifications && item.serviceVerifications.length > 0
@@ -753,6 +1005,9 @@ function buildReportPreviewData(item: RequestItem, viewerName: string) {
               comment: attempt.comment,
               verifierName: attempt.verifierName ?? "",
               managerName: attempt.managerName ?? "",
+              respondentName: attempt.respondentName ?? "",
+              respondentEmail: attempt.respondentEmail ?? "",
+              respondentComment: attempt.respondentComment ?? "",
             })),
           };
         })
@@ -801,7 +1056,10 @@ function buildReportPreviewData(item: RequestItem, viewerName: string) {
   const personalDetails =
     stored?.personalDetails && stored.personalDetails.length > 0
       ? dedupePersonalDetailsAnswers(stored.personalDetails)
-      : splitSections.personalDetails;
+      : dedupePersonalDetailsAnswers([
+          ...splitSections.personalDetails,
+          ...personalDetailsFromCandidateResponses,
+        ]);
   const services = splitSections.services;
   const latestAttempt = services
     .flatMap((service) => service.attempts)
@@ -975,6 +1233,110 @@ function toAppealServiceLabel(appeal: RequestItem["reverificationAppeal"] | null
   return names.join(", ");
 }
 
+type PendingExtraPaymentApprovalEntry = {
+  serviceId: string;
+  serviceEntryIndex: number;
+  serviceInstanceKey: string;
+  serviceName: string;
+  attemptedAt: string;
+  amount: number;
+  currency: string;
+  comment: string;
+  verifierName: string;
+  managerName: string;
+};
+
+function normalizeExtraPaymentApprovalStatus(value: unknown) {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  if (
+    normalized === "not-requested" ||
+    normalized === "pending" ||
+    normalized === "approved" ||
+    normalized === "rejected"
+  ) {
+    return normalized;
+  }
+
+  return "not-requested";
+}
+
+function resolveServiceCurrency(item: RequestItem, serviceId: string) {
+  const selectedService = (item.selectedServices ?? []).find(
+    (service) => String(service.serviceId || "").trim() === serviceId,
+  );
+  return selectedService?.currency ?? "INR";
+}
+
+function getPendingExtraPaymentApprovals(item: RequestItem) {
+  const approvals: PendingExtraPaymentApprovalEntry[] = [];
+
+  for (const service of item.serviceVerifications ?? []) {
+    const serviceId = String(service.serviceId || "").trim();
+    if (!serviceId) {
+      continue;
+    }
+
+    const serviceEntryIndex = normalizePositiveInteger(service.serviceEntryIndex, 1);
+    const serviceEntryCount = Math.max(
+      1,
+      normalizePositiveInteger(service.serviceEntryCount, 1),
+      serviceEntryIndex,
+    );
+    const serviceInstanceKey =
+      service.serviceInstanceKey || buildServiceInstanceKey(serviceId, serviceEntryIndex);
+    const serviceName = formatServiceInstanceName(
+      service.serviceName || "Service",
+      serviceEntryIndex,
+      serviceEntryCount,
+    );
+    const serviceCurrency = resolveServiceCurrency(item, serviceId);
+
+    for (const attempt of service.attempts ?? []) {
+      const approvalStatus = normalizeExtraPaymentApprovalStatus(
+        attempt.extraPaymentApprovalStatus,
+      );
+      const amount =
+        typeof attempt.extraPaymentAmount === "number" &&
+        Number.isFinite(attempt.extraPaymentAmount) &&
+        attempt.extraPaymentAmount > 0
+          ? Math.round(attempt.extraPaymentAmount * 100) / 100
+          : null;
+
+      if (!attempt.extraPaymentApprovalRequested || approvalStatus !== "pending" || !amount) {
+        continue;
+      }
+
+      approvals.push({
+        serviceId,
+        serviceEntryIndex,
+        serviceInstanceKey,
+        serviceName,
+        attemptedAt: attempt.attemptedAt,
+        amount,
+        currency: serviceCurrency,
+        comment: attempt.comment ?? "",
+        verifierName: attempt.verifierName ?? "",
+        managerName: attempt.managerName ?? "",
+      });
+    }
+  }
+
+  return approvals.sort(
+    (first, second) =>
+      new Date(second.attemptedAt || 0).getTime() -
+      new Date(first.attemptedAt || 0).getTime(),
+  );
+}
+
+function buildExtraPaymentDecisionKey(
+  requestId: string,
+  serviceId: string,
+  serviceEntryIndex: number,
+  attemptedAt: string,
+) {
+  return `${requestId}:${serviceId}:${serviceEntryIndex}:${attemptedAt}`;
+}
+
 function RequestsPageContent() {
   const { me, loading, logout } = usePortalSession();
   const searchParams = useSearchParams();
@@ -1006,6 +1368,7 @@ function RequestsPageContent() {
   const [rejectionComment, setRejectionComment] = useState("");
   const [rejectingRequestId, setRejectingRequestId] = useState("");
   const [decisioningRequestId, setDecisioningRequestId] = useState("");
+  const [paymentDecisioningKey, setPaymentDecisioningKey] = useState("");
   const [tablePage, setTablePage] = useState(1);
   const [manualRefreshInProgress, setManualRefreshInProgress] = useState(false);
   const [resendingCandidateLinkRequestId, setResendingCandidateLinkRequestId] = useState("");
@@ -1227,6 +1590,12 @@ function RequestsPageContent() {
 
     return getEnterpriseDecisionWindow(activeResponseRequest, nowMs);
   }, [activeResponseRequest, nowMs]);
+
+  const activePendingExtraPaymentApprovals = useMemo(
+    () =>
+      activeResponseRequest ? getPendingExtraPaymentApprovals(activeResponseRequest) : [],
+    [activeResponseRequest],
+  );
 
   function closeResponseModal() {
     setActiveResponseRequestId("");
@@ -1576,6 +1945,79 @@ function RequestsPageContent() {
     await refreshRequests();
   }
 
+  async function submitExtraPaymentDecision(
+    item: RequestItem,
+    approval: PendingExtraPaymentApprovalEntry,
+    decision: "approve" | "reject",
+  ) {
+    const decisionKey = buildExtraPaymentDecisionKey(
+      item._id,
+      approval.serviceId,
+      approval.serviceEntryIndex,
+      approval.attemptedAt,
+    );
+
+    let rejectionNote = "";
+
+    if (decision === "approve") {
+      const isConfirmed = window.confirm(
+        `Approve extra payment ${approval.currency} ${approval.amount.toFixed(2)} for ${approval.serviceName}?`,
+      );
+      if (!isConfirmed) {
+        return;
+      }
+    } else {
+      const note = window.prompt(
+        "Optional note for rejection:",
+        "Rejected by customer.",
+      );
+      if (note === null) {
+        return;
+      }
+
+      rejectionNote = note.trim();
+      const isConfirmed = window.confirm(
+        `Reject extra payment ${approval.currency} ${approval.amount.toFixed(2)} for ${approval.serviceName}?`,
+      );
+      if (!isConfirmed) {
+        return;
+      }
+    }
+
+    setMessage("");
+    setPaymentDecisioningKey(decisionKey);
+
+    const response = await fetch("/api/orders", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "extra-payment-approval-decision",
+        requestId: item._id,
+        serviceId: approval.serviceId,
+        serviceEntryIndex: approval.serviceEntryIndex,
+        attemptedAt: approval.attemptedAt,
+        decision,
+        rejectionNote,
+      }),
+    });
+
+    const data = (await response.json()) as { message?: string; error?: string };
+    setPaymentDecisioningKey("");
+
+    if (!response.ok) {
+      setMessage(data.error ?? "Could not update extra payment approval status.");
+      return;
+    }
+
+    setMessage(
+      data.message ??
+        (decision === "approve"
+          ? "Extra payment request approved."
+          : "Extra payment request rejected."),
+    );
+    await refreshRequests();
+  }
+
   function startRejectedEdit(item: RequestItem) {
     setEditingRequestId(item._id);
     setEditCandidateName(item.candidateName);
@@ -1871,13 +2313,17 @@ function RequestsPageContent() {
                     </thead>
                     <tbody>
                       {serviceResponseEntry.answers.map((answer, answerIndex) => {
+                        const resolvedFile = resolveAnswerFileForEntry(
+                          answer,
+                          serviceResponseEntry.entryIndex,
+                        );
                         const answerValueForEntry = getAnswerValueForEntry(
                           answer,
                           serviceResponseEntry.entryIndex,
                         ).trim();
                         const valueText =
                           answer.fieldType === "file"
-                            ? answer.fileName || "File uploaded"
+                            ? resolvedFile.fileName || "File uploaded"
                             : answerValueForEntry || "-";
 
                         return (
@@ -1892,11 +2338,11 @@ function RequestsPageContent() {
                               </span>
                             </td>
                             <td style={{ padding: "0.55rem 0.45rem" }}>
-                              {answer.fieldType === "file" && answer.fileData ? (
+                              {answer.fieldType === "file" && resolvedFile.fileData ? (
                                 <a
-                                  href={answer.fileData}
+                                  href={resolvedFile.fileData}
                                   download={
-                                    answer.fileName ||
+                                    resolvedFile.fileName ||
                                     `attachment-${serviceResponseEntry.serviceEntryNumber}-${answerIndex}`
                                   }
                                   style={{
@@ -2121,8 +2567,6 @@ function RequestsPageContent() {
               </div>
             </section>
 
-            <div style={{ borderTop: "1px solid #717171", marginTop: "1.1rem" }} />
-
             {report.personalDetails.length > 0 ? (
               <section style={{ marginTop: "1.05rem" }}>
                 <h3
@@ -2201,6 +2645,8 @@ function RequestsPageContent() {
                 </div>
               </section>
             ) : null}
+
+            <div style={{ borderTop: "1px solid #717171", marginTop: "1.1rem" }} />
 
             <section style={{ marginTop: "1.35rem" }}>
               <h3
@@ -2404,15 +2850,37 @@ function RequestsPageContent() {
                                       lineHeight: 1.35,
                                     }}
                                   >
-                                    <div>
-                                      <strong>Verifier:</strong>{" "}
-                                      {attempt.verifierName || "-"}
-                                    </div>
-                                    <div>
-                                      <strong>Manager:</strong>{" "}
-                                      {attempt.managerName || "-"}
-                                    </div>
-                                    {attempt.comment ? (
+                                    {attempt.verifierName?.trim() ? (
+                                      <div>
+                                        <strong>Verifier:</strong>{" "}
+                                        {attempt.verifierName}
+                                      </div>
+                                    ) : null}
+                                    {attempt.managerName?.trim() ? (
+                                      <div>
+                                        <strong>Manager:</strong>{" "}
+                                        {attempt.managerName}
+                                      </div>
+                                    ) : null}
+                                    {attempt.respondentName?.trim() ? (
+                                      <div>
+                                        <strong>Respondent Name:</strong>{" "}
+                                        {attempt.respondentName}
+                                      </div>
+                                    ) : null}
+                                    {attempt.respondentEmail?.trim() ? (
+                                      <div>
+                                        <strong>Respondent Email:</strong>{" "}
+                                        {attempt.respondentEmail}
+                                      </div>
+                                    ) : null}
+                                    {attempt.respondentComment?.trim() ? (
+                                      <div>
+                                        <strong>Respondent Comment:</strong>{" "}
+                                        {attempt.respondentComment}
+                                      </div>
+                                    ) : null}
+                                    {attempt.comment?.trim() ? (
                                       <div>
                                         <strong>Note:</strong> {attempt.comment}
                                       </div>
@@ -2559,6 +3027,8 @@ function RequestsPageContent() {
                   const formSubmitted = item.candidateFormStatus === "submitted";
                   const isActionRowActive = selectedActionRowId === item._id;
                   const decisionWindow = getEnterpriseDecisionWindow(item, nowMs);
+                  const pendingExtraPaymentApprovals = getPendingExtraPaymentApprovals(item);
+                  const pendingExtraPaymentCount = pendingExtraPaymentApprovals.length;
                   const appealServiceLabel = toAppealServiceLabel(item.reverificationAppeal);
                   const statusDisplay = getRequestStatusDisplay(item);
                   const reverificationDate = resolveReverificationDate(item);
@@ -2626,6 +3096,14 @@ function RequestsPageContent() {
                             {appealServiceLabel}
                           </div>
                         ) : null}
+                        {pendingExtraPaymentCount > 0 ? (
+                          <div className="mt-2 text-xs text-amber-700 font-semibold max-w-[220px] whitespace-normal">
+                            <strong className="block">Payment Approval Pending:</strong>
+                            {pendingExtraPaymentCount === 1
+                              ? "1 extra payment request"
+                              : `${pendingExtraPaymentCount} extra payment requests`}
+                          </div>
+                        ) : null}
                         {item.status === "approved" && (
                           <div className="mt-2 text-xs font-semibold text-slate-600">
                             {decisionWindow.isLocked
@@ -2684,6 +3162,24 @@ function RequestsPageContent() {
                            >
                              {hasResponses ? "Review Data" : "No Data Yet"}
                            </button>
+
+                           {pendingExtraPaymentCount > 0 ? (
+                             <button
+                               type="button"
+                               className="px-3 py-1.5 rounded-md text-xs font-bold transition-all shadow-sm bg-amber-100 border border-amber-300 text-amber-800 hover:-translate-y-0.5 hover:bg-amber-200 hover:border-amber-400 hover:text-amber-900 active:translate-y-0 active:scale-[0.98] active:bg-amber-300 active:border-amber-500 active:text-amber-950"
+                               onClick={() => {
+                                 setActiveReportRequestId("");
+                                 setActiveResponseRequestId(item._id);
+                                 setIsRejectSelectorOpen(false);
+                                 setSelectedRejectedFieldKeys([]);
+                                 setRejectionComment("");
+                               }}
+                             >
+                               {pendingExtraPaymentCount === 1
+                                 ? "Approve Extra Payment"
+                                 : `Approve Extra Payments (${pendingExtraPaymentCount})`}
+                             </button>
+                           ) : null}
 
                            <button
                              type="button"
@@ -3486,6 +3982,116 @@ function RequestsPageContent() {
               </button>
             </div>
 
+            {activePendingExtraPaymentApprovals.length > 0 ? (
+              <section
+                style={{
+                  border: "1px solid #FCD34D",
+                  background: "#FFFBEB",
+                  borderRadius: "12px",
+                  padding: "0.85rem",
+                  marginBottom: "1rem",
+                  display: "grid",
+                  gap: "0.6rem",
+                }}
+              >
+                <div>
+                  <strong style={{ color: "#92400E" }}>Extra Payment Approval Window</strong>
+                  <p style={{ margin: "0.35rem 0 0", color: "#92400E", fontSize: "0.84rem" }}>
+                    Verification team requested additional payment. Approve or reject each pending request.
+                  </p>
+                </div>
+
+                <div style={{ display: "grid", gap: "0.55rem" }}>
+                  {activePendingExtraPaymentApprovals.map((approval) => {
+                    const decisionKey = buildExtraPaymentDecisionKey(
+                      activeResponseRequest._id,
+                      approval.serviceId,
+                      approval.serviceEntryIndex,
+                      approval.attemptedAt,
+                    );
+                    const isDecisioning = paymentDecisioningKey === decisionKey;
+
+                    return (
+                      <article
+                        key={decisionKey}
+                        style={{
+                          border: "1px solid #FDE68A",
+                          borderRadius: "10px",
+                          background: "#FFFFFF",
+                          padding: "0.72rem",
+                          display: "grid",
+                          gap: "0.45rem",
+                        }}
+                      >
+                        <div style={{ display: "flex", justifyContent: "space-between", gap: "0.6rem", flexWrap: "wrap" }}>
+                          <strong style={{ color: "#334155" }}>{approval.serviceName}</strong>
+                          <span style={{ color: "#92400E", fontWeight: 700 }}>
+                            {approval.currency} {approval.amount.toFixed(2)}
+                          </span>
+                        </div>
+
+                        <div style={{ color: "#475569", fontSize: "0.82rem" }}>
+                          <strong>Requested At:</strong> {formatReportDateTime(approval.attemptedAt)}
+                        </div>
+
+                        {approval.comment.trim() ? (
+                          <div style={{ color: "#475569", fontSize: "0.82rem", whiteSpace: "pre-wrap" }}>
+                            <strong>Verifier Note:</strong> {approval.comment}
+                          </div>
+                        ) : null}
+
+                        {(approval.verifierName || approval.managerName) ? (
+                          <div style={{ color: "#475569", fontSize: "0.82rem" }}>
+                            <strong>Team:</strong>{" "}
+                            {[approval.verifierName, approval.managerName].filter(Boolean).join(" / ")}
+                          </div>
+                        ) : null}
+
+                        <div style={{ display: "inline-flex", gap: "0.45rem", flexWrap: "wrap" }}>
+                          <button
+                            type="button"
+                            className="btn btn-primary"
+                            style={{ padding: "0.32rem 0.62rem", fontSize: "0.78rem" }}
+                            disabled={isDecisioning}
+                            onClick={() =>
+                              void submitExtraPaymentDecision(
+                                activeResponseRequest,
+                                approval,
+                                "approve",
+                              )
+                            }
+                          >
+                            {isDecisioning ? "Updating..." : "Approve"}
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-secondary"
+                            style={{
+                              padding: "0.32rem 0.62rem",
+                              fontSize: "0.78rem",
+                              borderColor: "#FCA5A5",
+                              color: "#B91C1C",
+                              background: "#FEF2F2",
+                            }}
+                            disabled={isDecisioning}
+                            onClick={() =>
+                              void submitExtraPaymentDecision(
+                                activeResponseRequest,
+                                approval,
+                                "reject",
+                              )
+                            }
+                          >
+                            {isDecisioning ? "Updating..." : "Reject"}
+                          </button>
+                        </div>
+                      </article>
+                    );
+                  })}
+                </div>
+              </section>
+            ) : null}
+
             <div className="bg-slate-50 rounded-xl p-4 border border-slate-200">
               {renderResponseContent(activeResponseRequest)}
             </div>
@@ -3583,13 +4189,17 @@ function RequestsPageContent() {
                             answer.fieldKey ?? "",
                           );
                           const isChecked = selectedRejectedFieldKeys.includes(fieldKey);
+                          const resolvedFile = resolveAnswerFileForEntry(
+                            answer,
+                            serviceResponseEntry.entryIndex,
+                          );
                           const answerValueForEntry = getAnswerValueForEntry(
                             answer,
                             serviceResponseEntry.entryIndex,
                           ).trim();
                           const answerPreview =
                             answer.fieldType === "file"
-                              ? answer.fileName || "File uploaded"
+                              ? resolvedFile.fileName || "File uploaded"
                               : answerValueForEntry || "-";
 
                           return (

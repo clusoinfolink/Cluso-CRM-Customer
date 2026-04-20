@@ -122,6 +122,15 @@ const VerificationRequestSchema = new Schema(
             fileMimeType: { type: String, default: "" },
             fileSize: { type: Number, default: null },
             fileData: { type: String, default: "" },
+            entryFiles: [
+              {
+                entryIndex: { type: Number, required: true, min: 1 },
+                fileName: { type: String, default: "" },
+                fileMimeType: { type: String, default: "" },
+                fileSize: { type: Number, default: null },
+                fileData: { type: String, default: "" },
+              },
+            ],
           },
         ],
       },
@@ -167,6 +176,30 @@ const VerificationRequestSchema = new Schema(
             verificationMode: { type: String, default: "" },
             comment: { type: String, default: "" },
             verifierNote: { type: String, default: "" },
+            respondentName: { type: String, default: "" },
+            respondentEmail: { type: String, default: "" },
+            respondentComment: { type: String, default: "" },
+            extraPaymentDone: { type: Boolean, default: false },
+            extraPaymentAmount: { type: Number, default: null, min: 0 },
+            extraPaymentApprovalRequested: { type: Boolean, default: false },
+            extraPaymentApprovalStatus: {
+              type: String,
+              enum: ["not-requested", "pending", "approved", "rejected"],
+              default: "not-requested",
+            },
+            extraPaymentApprovalRequestedAt: { type: Date, default: null },
+            extraPaymentApprovalRequestedBy: {
+              type: Schema.Types.ObjectId,
+              ref: "User",
+              default: null,
+            },
+            extraPaymentApprovalRespondedAt: { type: Date, default: null },
+            extraPaymentApprovalRespondedBy: {
+              type: Schema.Types.ObjectId,
+              ref: "User",
+              default: null,
+            },
+            extraPaymentApprovalRejectionNote: { type: String, default: "" },
             screenshotFileName: { type: String, default: "" },
             screenshotMimeType: { type: String, default: "" },
             screenshotFileSize: { type: Number, default: null },
@@ -308,6 +341,7 @@ if (
     !models.VerificationRequest.schema.path("customerRejectedFields.fieldKey") ||
     !models.VerificationRequest.schema.path("candidateFormResponses.serviceEntryCount") ||
     !models.VerificationRequest.schema.path("candidateFormResponses.answers.fileData") ||
+    !models.VerificationRequest.schema.path("candidateFormResponses.answers.entryFiles") ||
     !models.VerificationRequest.schema.path("candidateFormResponses.answers.fieldKey") ||
     !models.VerificationRequest.schema.path("candidateFormResponses.answers.notApplicable") ||
     !models.VerificationRequest.schema.path("candidateFormResponses.answers.notApplicableText") ||
@@ -322,6 +356,14 @@ if (
     !models.VerificationRequest.schema.path("serviceVerifications.serviceInstanceKey") ||
     !models.VerificationRequest.schema.path("serviceVerifications.attempts.screenshotData") ||
     !models.VerificationRequest.schema.path("serviceVerifications.attempts.verifierNote") ||
+    !models.VerificationRequest.schema.path("serviceVerifications.attempts.respondentName") ||
+    !models.VerificationRequest.schema.path("serviceVerifications.attempts.respondentEmail") ||
+    !models.VerificationRequest.schema.path("serviceVerifications.attempts.respondentComment") ||
+    !models.VerificationRequest.schema.path("serviceVerifications.attempts.extraPaymentDone") ||
+    !models.VerificationRequest.schema.path("serviceVerifications.attempts.extraPaymentAmount") ||
+    !models.VerificationRequest.schema.path(
+      "serviceVerifications.attempts.extraPaymentApprovalStatus",
+    ) ||
     !models.VerificationRequest.schema.path("serviceVerifications.attempts.attemptedAt") ||
     !models.VerificationRequest.schema.path("reportMetadata") ||
     !models.VerificationRequest.schema.path("reportMetadata.customerSharedAt") ||
