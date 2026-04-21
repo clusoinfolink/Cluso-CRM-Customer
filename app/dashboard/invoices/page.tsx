@@ -1133,7 +1133,20 @@ export default function CustomerInvoicesPage() {
       {message ? <p className={`inline-alert ${getAlertTone(message)}`}>{message}</p> : null}
 
       {/* Top Stats - Redesigned */}
-      <section className="customer-invoice-overview" onScroll={handleOverviewScroll} style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: "1.25rem", marginBottom: "1.8rem" }}>
+      <div 
+        style={{ 
+          position: "sticky", 
+          top: 0, 
+          zIndex: 40, 
+          backgroundColor: "#F8FAFC", 
+          paddingTop: "1rem", 
+          paddingBottom: "0.5rem",
+          margin: "-1rem 0 1.8rem",
+          paddingLeft: "0",
+          paddingRight: "0"
+        }}
+      >
+        <section className="customer-invoice-overview" onScroll={handleOverviewScroll} style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: "1.25rem", marginBottom: "0" }}>
         
         <div
           ref={(element) => {
@@ -1211,6 +1224,7 @@ export default function CustomerInvoicesPage() {
             aria-pressed={overviewCardIndex === index}
           />
         ))}
+      </div>
       </div>
 
       {/* Main Master-Detail Layout */}
@@ -2694,3 +2708,4 @@ export default function CustomerInvoicesPage() {
     </PortalFrame>
   );
 }
+

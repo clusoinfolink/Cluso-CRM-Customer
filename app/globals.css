@@ -1755,13 +1755,7 @@ body::before {
   --frame-header-height: 88px;
 }
 
-body {
-  margin: 0;
-  color: var(--ink);
-  font-family: "Inter", "Plus Jakarta Sans", "Segoe UI", sans-serif;
-  background-color: var(--bg-color);
-  min-height: 100vh;
-}
+body { margin: 0; color: var(--ink); font-family: "Inter", "Plus Jakarta Sans", "Segoe UI", sans-serif; background-color: var(--bg-color); min-height: 100vh; overflow-x: hidden; }
 
 .admin-layout {
   display: flex;
@@ -1892,9 +1886,11 @@ body {
 
 .portal-shell {
   padding: 2rem;
-  max-width: none;
+  max-width: 100%;
   margin: 0;
   width: 100%;
+  overflow-x: auto;
+  min-width: 0;
 }
 
 .glass-card,
@@ -2406,6 +2402,9 @@ body {
     text-overflow: ellipsis;
   }
 }
+
+
+
 
 
 
