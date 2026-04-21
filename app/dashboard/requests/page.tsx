@@ -785,6 +785,27 @@ function parseStoredReportData(
 type CandidateServiceResponse = NonNullable<RequestItem["candidateFormResponses"]>[number];
 type CandidateServiceAnswer = CandidateServiceResponse["answers"][number];
 
+function sortCandidateResponsesForDisplay(
+  responses: CandidateServiceResponse[],
+) {
+  return responses
+    .map((serviceResponse, index) => ({
+      serviceResponse,
+      index,
+      isPersonalDetailsService: isPersonalDetailsServiceName(
+        serviceResponse.serviceName,
+      ),
+    }))
+    .sort((left, right) => {
+      if (left.isPersonalDetailsService === right.isPersonalDetailsService) {
+        return left.index - right.index;
+      }
+
+      return left.isPersonalDetailsService ? -1 : 1;
+    })
+    .map((entry) => entry.serviceResponse);
+}
+
 function resolveServiceResponseEntryCount(serviceResponse: CandidateServiceResponse) {
   const declaredCount = normalizePositiveInteger(serviceResponse.serviceEntryCount, 1);
   const maxRepeatableCount = serviceResponse.answers.reduce((maxCount, answer) => {
@@ -2209,7 +2230,9 @@ function RequestsPageContent() {
   }
 
   function renderResponseContent(item: RequestItem) {
-    const serviceResponses = item.candidateFormResponses ?? [];
+    const serviceResponses = sortCandidateResponsesForDisplay(
+      item.candidateFormResponses ?? [],
+    );
     const serviceResponseEntries = serviceResponses.flatMap((serviceResponse) => {
       const serviceEntryCount = resolveServiceResponseEntryCount(serviceResponse);
 
@@ -4151,7 +4174,9 @@ function RequestsPageContent() {
                 </div>
 
                 <div className="grid gap-4 max-h-[36vh] overflow-y-auto pr-2 custom-scrollbar">
-                  {(activeResponseRequest.candidateFormResponses ?? [])
+                  {sortCandidateResponsesForDisplay(
+                    activeResponseRequest.candidateFormResponses ?? [],
+                  )
                     .flatMap((serviceResponse) => {
                       const serviceEntryCount = resolveServiceResponseEntryCount(serviceResponse);
 

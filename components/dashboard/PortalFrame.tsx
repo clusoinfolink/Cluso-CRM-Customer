@@ -15,6 +15,18 @@ import {
   LayoutDashboard,
   ReceiptText,
   User,
+  PieChart,
+  Activity,
+  FileText,
+  Briefcase,
+  Search,
+  ScanEye,
+  Wallet,
+  CreditCard,
+  Users,
+  Shield,
+  Sliders,
+  BellRing,
   type LucideIcon,
 } from "lucide-react";
 import { ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -28,20 +40,111 @@ type PortalFrameProps = {
   children: ReactNode;
 };
 
+type NavItemTheme = {
+  bg: string;
+  border: string;
+  text: string;
+  iconColor: string;
+  gradient: string;
+};
+
 type NavItem = {
   href: string;
   label: string;
+  description: string;
+  theme: NavItemTheme;
 };
 
-type IconNavItem = NavItem & { icon: LucideIcon };
+type IconNavItem = NavItem & { 
+  icon: LucideIcon;
+  subIcons: LucideIcon[];
+};
 
 const navItems: IconNavItem[] = [
-  { href: "/dashboard", label: "Overview", icon: LayoutDashboard },
-  { href: "/dashboard/orders", label: "Orders", icon: Clipboard },
-  { href: "/dashboard/requests", label: "Requests", icon: ListChecks },
-  { href: "/dashboard/invoices", label: "Invoices", icon: ReceiptText },
-  { href: "/dashboard/team", label: "Team", icon: ListChecks },
-  { href: "/dashboard/settings", label: "Settings", icon: Settings },
+  { 
+    href: "/dashboard", 
+    label: "Overview", 
+    icon: LayoutDashboard,
+    description: "Get a bird's-eye view of your candidate progress, recent activity, and overall health metrics.",
+    subIcons: [PieChart, Activity],
+    theme: {
+      bg: "bg-blue-50 dark:bg-blue-900/40",
+      border: "border-blue-200 dark:border-blue-800",
+      text: "text-blue-800 dark:text-blue-300",
+      iconColor: "text-blue-600 dark:text-blue-400",
+      gradient: "from-blue-500 to-cyan-400",
+    }
+  },
+  { 
+    href: "/dashboard/orders", 
+    label: "Orders", 
+    icon: Clipboard,
+    description: "Place new verification orders and track the fulfillment of individual candidate background reports.",
+    subIcons: [FileText, Briefcase],
+    theme: {
+      bg: "bg-emerald-50 dark:bg-emerald-900/40",
+      border: "border-emerald-200 dark:border-emerald-800",
+      text: "text-emerald-800 dark:text-emerald-300",
+      iconColor: "text-emerald-600 dark:text-emerald-400",
+      gradient: "from-emerald-500 to-teal-400",
+    }
+  },
+  { 
+    href: "/dashboard/requests", 
+    label: "Requests", 
+    icon: ListChecks,
+    description: "Review detailed candidate form submissions, evaluate enterprise decisions, and track verifications.",
+    subIcons: [Search, ScanEye],
+    theme: {
+      bg: "bg-violet-50 dark:bg-violet-900/40",
+      border: "border-violet-200 dark:border-violet-800",
+      text: "text-violet-800 dark:text-violet-300",
+      iconColor: "text-violet-600 dark:text-violet-400",
+      gradient: "from-violet-500 to-fuchsia-400",
+    }
+  },
+  { 
+    href: "/dashboard/invoices", 
+    label: "Invoices", 
+    icon: ReceiptText,
+    description: "Access your billing history, download comprehensive invoices, and manage payment receipts safely.",
+    subIcons: [Wallet, CreditCard],
+    theme: {
+      bg: "bg-rose-50 dark:bg-rose-900/40",
+      border: "border-rose-200 dark:border-rose-800",
+      text: "text-rose-800 dark:text-rose-300",
+      iconColor: "text-rose-600 dark:text-rose-400",
+      gradient: "from-rose-500 to-pink-400",
+    }
+  },
+  { 
+    href: "/dashboard/team", 
+    label: "Team", 
+    icon: Users,
+    description: "Manage your enterprise organization members, configure their roles, and set collaboration boundaries.",
+    subIcons: [Users, Shield],
+    theme: {
+      bg: "bg-amber-50 dark:bg-amber-900/40",
+      border: "border-amber-200 dark:border-amber-800",
+      text: "text-amber-800 dark:text-amber-300",
+      iconColor: "text-amber-600 dark:text-amber-400",
+      gradient: "from-amber-500 to-orange-400",
+    }
+  },
+  { 
+    href: "/dashboard/settings", 
+    label: "Settings", 
+    icon: Settings,
+    description: "Configure notifications, update company profiling securely, and tailor your platform experience.",
+    subIcons: [Sliders, BellRing],
+    theme: {
+      bg: "bg-slate-100 dark:bg-slate-800/80",
+      border: "border-slate-200 dark:border-slate-700",
+      text: "text-slate-800 dark:text-slate-300",
+      iconColor: "text-slate-600 dark:text-slate-400",
+      gradient: "from-slate-500 to-gray-400",
+    }
+  },
 ];
 
 const INACTIVE_ALLOWED_NAV_PATHS = ["/dashboard/invoices", "/dashboard/settings"];
@@ -413,15 +516,45 @@ export function PortalFrame({ me, onLogout, title, subtitle, children }: PortalF
           {visibleNav.map((item) => {
             const Icon = item.icon;
             return (
-              <Link
-                key={item.href}
-                href={item.href}
-                onClick={() => setIsMobileNavOpen(false)}
-                className={`portal-nav-link ${isNavActive(pathname, item.href) ? "active" : ""}`}
-              >
-                <Icon size={18} />
-                {item.label}
-              </Link>
+              <div key={item.href} className="relative group flex items-stretch">
+                <Link
+                  href={item.href}
+                  onClick={() => setIsMobileNavOpen(false)}
+                  className={`portal-nav-link w-full ${isNavActive(pathname, item.href) ? "active" : ""}`}
+                >
+                  <Icon size={18} />
+                  {item.label}
+                </Link>
+
+                <div 
+                  className="absolute left-full ml-[0.35rem] top-1/2 w-[270px] -translate-y-1/2 hidden lg:group-hover:flex flex-col z-[100] pointer-events-none scale-95 opacity-0 group-hover:scale-100 group-hover:opacity-100 transition-all duration-200 origin-left"
+                >
+                  <div className={`absolute top-1/2 -left-1.5 -translate-y-1/2 w-3 h-3 rotate-45 border-l border-b bg-white dark:bg-slate-900 ${item.theme.border} z-[1] drop-shadow-sm`}></div>
+                  
+                  <div className={`relative px-4 py-4 pb-5 rounded-2xl shadow-xl bg-white dark:bg-slate-900 border ${item.theme.border} z-[2] overflow-hidden`}>
+                    <div className={`absolute top-0 inset-x-0 h-1 bg-gradient-to-r ${item.theme.gradient}`} />
+
+                    <div className="flex items-center gap-3 mb-2 pt-1">
+                      <div className={`p-1.5 rounded-lg flex items-center justify-center ${item.theme.bg} ${item.theme.text}`}>
+                        <Icon size={16} strokeWidth={2.5} className="drop-shadow-sm" />
+                      </div>
+                      <strong className="text-[14.5px] font-bold tracking-tight text-slate-800 dark:text-slate-100">{item.label}</strong>
+                    </div>
+                    
+                    <p className="text-[13px] leading-relaxed text-slate-500 dark:text-slate-400 mt-2 mb-4 font-medium px-0.5">
+                      {item.description}
+                    </p>
+                    
+                    <div className="flex items-center gap-2 mt-auto px-0.5">
+                      {item.subIcons?.map((SubIcon, idx) => (
+                         <div key={idx} className={`p-1.5 rounded-lg bg-slate-50 dark:bg-slate-800/80 border border-slate-100 dark:border-slate-700/80 ${item.theme.iconColor}`}>
+                           <SubIcon size={16} strokeWidth={2} />
+                         </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
             );
           })}
         </nav>
