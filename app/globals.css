@@ -2414,3 +2414,9 @@ body { margin: 0; color: var(--ink); font-family: "Inter", "Plus Jakarta Sans", 
 
 
 
+
+/* Windows 11 Thinner bold styling */
+.font-bold { font-weight: 600 !important; }
+.font-semibold { font-weight: 500 !important; }
+.font-medium { font-weight: 400 !important; }
+b, strong, h1, h2, h3, h4, h5, h6 { font-weight: 500 !important; }
