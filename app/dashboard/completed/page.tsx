@@ -151,6 +151,22 @@ function getEnterpriseStatusClassName(status: RequestStatus) {
   return "bg-yellow-100 text-yellow-700 border border-yellow-200";
 }
 
+function canOpenSharedReport(item: RequestItem) {
+  return (
+    (item.status === "verified" || item.status === "completed") &&
+    Boolean(item.reportData) &&
+    Boolean(item.reportMetadata?.customerSharedAt)
+  );
+}
+
+function canAccessCandidateLinkActions(item: RequestItem) {
+  if (item.status === "completed") {
+    return true;
+  }
+
+  return item.status !== "verified" && item.candidateFormStatus !== "submitted";
+}
+
 function getRequestStatusDisplay(item: RequestItem) {
   if (item.status === "verified" && item.reverificationAppeal?.status === "resolved") {
     return {
@@ -1752,10 +1768,7 @@ function RequestsPageContent() {
   }
 
   function openSharedReport(item: RequestItem) {
-    const canViewSharedReport =
-      item.status === "verified" &&
-      Boolean(item.reportData) &&
-      Boolean(item.reportMetadata?.customerSharedAt);
+    const canViewSharedReport = canOpenSharedReport(item);
 
     if (!canViewSharedReport) {
       setMessage("Report is not shared with customer portal yet.");
@@ -3057,12 +3070,8 @@ function RequestsPageContent() {
                   const appealServiceLabel = toAppealServiceLabel(item.reverificationAppeal);
                   const statusDisplay = getRequestStatusDisplay(item);
                   const reverificationDate = resolveReverificationDate(item);
-                  const canViewSharedReport =
-                    item.status === "verified" &&
-                    Boolean(item.reportData) &&
-                    Boolean(item.reportMetadata?.customerSharedAt);
-                  const canManageCandidateLink =
-                    item.status !== "verified" && item.candidateFormStatus !== "submitted";
+                  const canViewSharedReport = canOpenSharedReport(item);
+                  const canManageCandidateLink = canAccessCandidateLinkActions(item);
 
                   return (
                     <tr
