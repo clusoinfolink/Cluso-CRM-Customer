@@ -29,7 +29,7 @@ const VerificationRequestSchema = new Schema(
     },
     status: {
       type: String,
-      enum: ["pending", "approved", "rejected", "verified"],
+      enum: ["pending", "approved", "rejected", "verified", "completed"],
       default: "pending",
     },
     candidateFormStatus: {

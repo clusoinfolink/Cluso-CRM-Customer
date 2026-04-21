@@ -1433,8 +1433,8 @@ function RequestsPageContent() {
   const normalizedSearch = searchText.trim().toLowerCase();
 
   const baseFilteredRequests = useMemo(() => {
-    return items.filter((item) => {
-        if (item.status === "completed") return false;
+    return items.filter((item) => { 
+        if (item.status !== "completed") return false;
 
       const itemCreatedDate = toLocalDateKey(item.createdAt);
 
@@ -4293,7 +4293,7 @@ function RequestsPageContent() {
   );
 }
 
-export default function RequestsPage() {
+export default function CompletedRequestsPage() {
   return (
     <Suspense fallback={
       <main className="min-h-screen bg-slate-50 p-6 flex items-center justify-center">
