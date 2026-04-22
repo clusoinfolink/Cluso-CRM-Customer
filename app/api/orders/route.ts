@@ -60,6 +60,11 @@ const appealReverificationSchema = z.object({
   attachmentData: z.string().trim().max(7_000_000).optional().default(""),
 });
 
+const revokeAppealSchema = z.object({
+  action: z.literal("revoke-reverification-appeal"),
+  requestId: z.string().min(1),
+});
+
 const previewCandidateLinkEmailSchema = z.object({
   action: z.literal("preview-candidate-link-email"),
   requestId: z.string().min(1),
@@ -2035,7 +2040,7 @@ export async function PATCH(req: NextRequest) {
 
     if (requestDoc.status !== "verified") {
       return NextResponse.json(
-        { error: "Only verified requests can be appealed for reverification." },
+        { error: "Appeal is not allowed once validation is completed." },
         { status: 400 },
       );
     }
@@ -2136,6 +2141,42 @@ export async function PATCH(req: NextRequest) {
     return NextResponse.json({
       message:
         "Appeal submitted. Admin can now review your comments and attachment for reverification.",
+    });
+  }
+
+  const revokeAppealParsed = revokeAppealSchema.safeParse(body);
+  if (revokeAppealParsed.success) {
+    const requestFilter: Record<string, unknown> = {
+      ...scopedFilter.filter,
+      _id: revokeAppealParsed.data.requestId,
+    };
+
+    const requestDoc = await VerificationRequest.findOne(requestFilter)
+      .select("reverificationAppeal")
+      .lean();
+
+    if (!requestDoc) {
+      return NextResponse.json({ error: "Request not found." }, { status: 404 });
+    }
+
+    const existingAppealStatus =
+      (requestDoc.reverificationAppeal as { status?: string } | null)?.status ?? "";
+    if (existingAppealStatus !== "open") {
+      return NextResponse.json(
+        { error: "No pending appeal found for this request." },
+        { status: 400 },
+      );
+    }
+
+    await VerificationRequest.findByIdAndUpdate(revokeAppealParsed.data.requestId, {
+      "reverificationAppeal.status": "resolved",
+      "reverificationAppeal.resolvedAt": new Date(),
+      "reverificationAppeal.resolvedBy": auth.userId,
+      "reverificationAppeal.resolvedByName": "Customer",
+    });
+
+    return NextResponse.json({
+      message: "Pending appeal revoked successfully.",
     });
   }
 
