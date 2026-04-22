@@ -25,9 +25,8 @@ type InvoiceTotalWithGst = {
   total: number;
 };
 
-type MonthSummaryRow = {
+type MonthlySummaryRow = {
   srNo: number;
-  requestId: string;
   requestedAt: string;
   candidateName: string;
   userName: string;
@@ -35,9 +34,22 @@ type MonthSummaryRow = {
   requestStatus: string;
   serviceName: string;
   currency: string;
-  priceWithoutGst: number;
+  subtotal: number;
   gstAmount: number;
-  priceWithGst: number;
+  total: number;
+};
+
+type MonthlySummaryData = {
+  billingMonth: string;
+  billingMonthLabel: string;
+  billingPeriod: string;
+  totalRequests: number;
+  gstEnabled: boolean;
+  gstRate: number;
+  enterpriseDetails: InvoiceRecord["enterpriseDetails"];
+  clusoDetails: InvoiceRecord["clusoDetails"];
+  rows: MonthlySummaryRow[];
+  totalsByCurrency: InvoiceTotalWithGst[];
 };
 
 type PaymentMethod = "upi" | "wireTransfer";
@@ -99,50 +111,6 @@ function clampGstRate(value: number) {
 
 function roundMoney(value: number) {
   return Math.round(value * 100) / 100;
-}
-
-function normalizeServiceUsageCount(value: unknown) {
-  const usageCount = Number(value);
-  if (!Number.isFinite(usageCount) || usageCount <= 0) {
-    return 1;
-  }
-
-  return Math.max(1, Math.floor(usageCount));
-}
-
-function resolveRequestVerifierName(request: {
-  serviceVerifications?: Array<{
-    attempts?: Array<{
-      verifierName?: string;
-      managerName?: string;
-      attemptedAt?: string;
-    }>;
-  }>;
-}) {
-  let latestVerifierName = "";
-  let latestAttemptedAt = -1;
-
-  for (const verification of request.serviceVerifications ?? []) {
-    for (const attempt of verification.attempts ?? []) {
-      const resolvedVerifierName =
-        (attempt.verifierName || "").trim() || (attempt.managerName || "").trim();
-      if (!resolvedVerifierName) {
-        continue;
-      }
-
-      const attemptedAt = new Date(attempt.attemptedAt || "");
-      const attemptedAtMs = Number.isNaN(attemptedAt.getTime())
-        ? -1
-        : attemptedAt.getTime();
-
-      if (attemptedAtMs >= latestAttemptedAt) {
-        latestAttemptedAt = attemptedAtMs;
-        latestVerifierName = resolvedVerifierName;
-      }
-    }
-  }
-
-  return latestVerifierName || "-";
 }
 
 function buildInvoiceTotalsWithGst(invoice: InvoiceRecord): InvoiceTotalWithGst[] {
@@ -214,6 +182,8 @@ function formatSummaryDate(isoString: string) {
 }
 
 function TimelineChart({ points }: { points: TimelinePoint[] }) {
+  const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
+
   if (!points || points.length === 0) {
     return (
       <p style={{ color: "#94A3B8", fontSize: "0.85rem", margin: "1rem 0" }}>
@@ -237,17 +207,48 @@ function TimelineChart({ points }: { points: TimelinePoint[] }) {
     .map((point, index) => `${index === 0 ? "M" : "L"} ${toX(index)} ${toY(point.count)}`)
     .join(" ");
 
+  const activePoint = hoveredIndex !== null ? points[hoveredIndex] ?? null : null;
+  const activePointX = hoveredIndex !== null ? toX(hoveredIndex) : 0;
+  const activePointY = activePoint ? toY(activePoint.count) : 0;
+
   const firstLabel = points[0]?.date ?? "";
   const lastLabel = points[points.length - 1]?.date ?? "";
 
   return (
-    <div style={{ marginTop: "0.9rem" }}>
+    <div style={{ marginTop: "0.9rem", position: "relative" }}>
+      {activePoint ? (
+        <div
+          style={{
+            position: "absolute",
+            left: `${(activePointX / width) * 100}%`,
+            top: `${(activePointY / height) * 100}%`,
+            transform: "translate(-50%, calc(-100% - 10px))",
+            background: "#0F172A",
+            color: "#F8FAFC",
+            borderRadius: "8px",
+            padding: "0.4rem 0.55rem",
+            fontSize: "0.72rem",
+            lineHeight: 1.3,
+            boxShadow: "0 10px 24px rgba(15, 23, 42, 0.28)",
+            pointerEvents: "none",
+            whiteSpace: "nowrap",
+            zIndex: 2,
+          }}
+        >
+          <div style={{ fontWeight: 600 }}>{activePoint.date}</div>
+          <div>
+            {activePoint.count} request attempt{activePoint.count === 1 ? "" : "s"}
+          </div>
+        </div>
+      ) : null}
+
       <svg
         viewBox={`0 0 ${width} ${height}`}
         preserveAspectRatio="none"
         style={{ width: "100%", height: "140px", display: "block" }}
         role="img"
         aria-label="Day-wise request attempts line graph"
+        onMouseLeave={() => setHoveredIndex(null)}
       >
         <line
           x1={padding.left}
@@ -282,17 +283,39 @@ function TimelineChart({ points }: { points: TimelinePoint[] }) {
           strokeLinejoin="round"
         />
 
-        {points.map((point, index) => (
-          <circle
-            key={`${point.date}-${index}`}
-            cx={toX(index)}
-            cy={toY(point.count)}
-            r={2.1}
-            fill="#1D4ED8"
-          >
-            <title>{`${point.date}: ${point.count} attempts`}</title>
-          </circle>
-        ))}
+        {points.map((point, index) => {
+          const x = toX(index);
+          const y = toY(point.count);
+          const isActive = hoveredIndex === index;
+
+          return (
+            <g key={`${point.date}-${index}`}>
+              <circle
+                cx={x}
+                cy={y}
+                r={isActive ? 3.4 : 2.1}
+                fill="#1D4ED8"
+                stroke={isActive ? "#DBEAFE" : "none"}
+                strokeWidth={isActive ? 1.1 : 0}
+              >
+                <title>{`${point.date}: ${point.count} attempts`}</title>
+              </circle>
+
+              <circle
+                cx={x}
+                cy={y}
+                r={9}
+                fill="transparent"
+                tabIndex={0}
+                aria-label={`${point.date}: ${point.count} attempts`}
+                style={{ cursor: "pointer" }}
+                onMouseEnter={() => setHoveredIndex(index)}
+                onFocus={() => setHoveredIndex(index)}
+                onBlur={() => setHoveredIndex((prev) => (prev === index ? null : prev))}
+              />
+            </g>
+          );
+        })}
       </svg>
 
       <div
@@ -319,6 +342,8 @@ export default function CustomerInvoicesPage() {
   });
   const [message, setMessage] = useState("");
   const [invoices, setInvoices] = useState<InvoiceRecord[]>([]);
+  const [monthlySummary, setMonthlySummary] = useState<MonthlySummaryData | null>(null);
+  const [loadingMonthlySummary, setLoadingMonthlySummary] = useState(false);
   const [selectedBillingMonth, setSelectedBillingMonth] = useState("");
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [selectedInvoiceId, setSelectedInvoiceId] = useState<string | null>(null);
@@ -337,6 +362,7 @@ export default function CustomerInvoicesPage() {
   const [removingPaymentReceipt, setRemovingPaymentReceipt] = useState(false);
   const [uploadingRelatedInfo, setUploadingRelatedInfo] = useState(false);
   const [paymentModalMessage, setPaymentModalMessage] = useState("");
+  const [loadingPaymentProofInvoiceId, setLoadingPaymentProofInvoiceId] = useState<string | null>(null);
   const [overviewCardIndex, setOverviewCardIndex] = useState(0);
   const overviewCardRefs = useRef<Array<HTMLDivElement | null>>([]);
   const paymentReceiptInputRef = useRef<HTMLInputElement | null>(null);
@@ -348,7 +374,9 @@ export default function CustomerInvoicesPage() {
 
   async function fetchInvoices() {
     try {
-      const res = await fetch("/api/invoices");
+      const res = await fetch("/api/invoices?includePaymentAssets=0", {
+        cache: "no-store",
+      });
       const data = (await res.json()) as { invoices?: InvoiceRecord[]; error?: string };
       if (!res.ok) {
         setMessage(data.error || "Failed to load invoices.");
@@ -356,8 +384,94 @@ export default function CustomerInvoicesPage() {
       }
 
       setInvoices(data.invoices ?? []);
-    } catch (err) {
+      setMessage("");
+    } catch {
       setMessage("Failed to load invoices.");
+    }
+  }
+
+  async function loadInvoicePaymentProofAssets(invoiceId: string) {
+    if (!invoiceId) {
+      return;
+    }
+
+    setLoadingPaymentProofInvoiceId(invoiceId);
+
+    try {
+      const query = new URLSearchParams({
+        invoiceId,
+        includePaymentAssets: "1",
+      });
+
+      const response = await fetch(`/api/invoices?${query.toString()}`, {
+        cache: "no-store",
+      });
+
+      const data = (await response.json()) as {
+        invoice?: InvoiceRecord;
+        error?: string;
+      };
+
+      if (!response.ok || !data.invoice) {
+        const errorMessage = data.error ?? "Could not load uploaded receipt preview.";
+        setPaymentModalMessage(errorMessage);
+        setMessage(errorMessage);
+        return;
+      }
+
+      const updatedInvoice = data.invoice;
+
+      setInvoices((current) =>
+        current.map((invoice) =>
+          invoice.id === updatedInvoice.id ? updatedInvoice : invoice,
+        ),
+      );
+    } catch {
+      const errorMessage = "Could not load uploaded receipt preview.";
+      setPaymentModalMessage(errorMessage);
+      setMessage(errorMessage);
+    } finally {
+      setLoadingPaymentProofInvoiceId((current) =>
+        current === invoiceId ? null : current,
+      );
+    }
+  }
+
+  async function loadMonthlySummary(billingMonth: string) {
+    if (!billingMonth) {
+      setMonthlySummary(null);
+      return;
+    }
+
+    setLoadingMonthlySummary(true);
+
+    try {
+      const query = new URLSearchParams({
+        action: "month-summary",
+        billingMonth,
+      });
+
+      const response = await fetch(`/api/invoices?${query.toString()}`, {
+        cache: "no-store",
+      });
+
+      const data = (await response.json()) as {
+        summary?: MonthlySummaryData | null;
+        error?: string;
+      };
+
+      if (!response.ok) {
+        setMessage(data.error ?? "Could not load billable month summary.");
+        setMonthlySummary(null);
+        return;
+      }
+
+      setMonthlySummary(data.summary ?? null);
+    } catch {
+      setMessage("Could not load billable month summary.");
+      setMonthlySummary(null);
+    } finally {
+      setLoadingMonthlySummary(false);
     }
   }
 
@@ -467,6 +581,11 @@ export default function CustomerInvoicesPage() {
         invoice.paymentProof.method === "wireTransfer" ? "wireTransfer" : "upi",
       );
       setIsPaymentMethodEntered(true);
+
+      if (!invoice.paymentProof.screenshotData) {
+        void loadInvoicePaymentProofAssets(invoice.id);
+      }
+
       return;
     }
 
@@ -489,6 +608,7 @@ export default function CustomerInvoicesPage() {
   function closePaymentModal() {
     setPaymentInvoiceId(null);
     setIsPaymentMethodEntered(false);
+    setLoadingPaymentProofInvoiceId(null);
     clearSelectedPaymentReceipt();
     clearSelectedRelatedInfoFile();
     setUploadingRelatedInfo(false);
@@ -782,8 +902,28 @@ export default function CustomerInvoicesPage() {
   }, [invoices, selectedBillingMonth]);
 
   const selectedInvoice = useMemo(() => {
-    return invoices.find((i) => i.id === selectedInvoiceId) || (filteredInvoices.length > 0 ? filteredInvoices[0] : null);
-  }, [invoices, selectedInvoiceId, filteredInvoices]);
+    if (filteredInvoices.length === 0) {
+      return null;
+    }
+
+    if (selectedInvoiceId) {
+      const matchedInvoice = filteredInvoices.find((invoice) => invoice.id === selectedInvoiceId);
+      if (matchedInvoice) {
+        return matchedInvoice;
+      }
+    }
+
+    return filteredInvoices[0];
+  }, [filteredInvoices, selectedInvoiceId]);
+
+  useEffect(() => {
+    if (!selectedInvoice?.billingMonth) {
+      setMonthlySummary(null);
+      return;
+    }
+
+    void loadMonthlySummary(selectedInvoice.billingMonth);
+  }, [selectedInvoice?.id, selectedInvoice?.billingMonth]);
 
   const paymentInvoice = useMemo(() => {
     if (!paymentInvoiceId) {
@@ -866,237 +1006,9 @@ export default function CustomerInvoicesPage() {
     return buildInvoiceTotalsWithGst(selectedInvoice);
   }, [selectedInvoice]);
 
-  const selectedMonthRequestRows = useMemo(() => {
-    if (!selectedInvoice) {
-      return [] as MonthSummaryRow[];
-    }
-
-    const gstRate = clampGstRate(selectedInvoice.gstRate);
-    const invoiceRatesByServiceId = new Map<string, { serviceName: string; currency: string; price: number }>();
-    const invoiceRatesByServiceName = new Map<string, { serviceName: string; currency: string; price: number }>();
-
-    selectedInvoice.lineItems.forEach((lineItem) => {
-      const serviceId = (lineItem.serviceId || "").trim();
-      const serviceName = (lineItem.serviceName || "Service Not Available").trim();
-      const serviceNameKey = serviceName.toLowerCase();
-      const entry = {
-        serviceName,
-        currency: (lineItem.currency || "INR").toUpperCase(),
-        price: roundMoney(Number(lineItem.price) || 0),
-      };
-
-      if (serviceId) {
-        invoiceRatesByServiceId.set(serviceId, entry);
-      }
-
-      if (serviceNameKey && !invoiceRatesByServiceName.has(serviceNameKey)) {
-        invoiceRatesByServiceName.set(serviceNameKey, entry);
-      }
-    });
-
-    const [yearText, monthText] = selectedInvoice.billingMonth.split("-");
-    const billingYear = Number.parseInt(yearText, 10);
-    const billingMonthIndex = Number.parseInt(monthText, 10) - 1;
-
-    if (!Number.isFinite(billingYear) || !Number.isFinite(billingMonthIndex)) {
-      return [] as MonthSummaryRow[];
-    }
-
-    const monthRequests = requestItems
-      .map((request) => {
-        const generatedAt = new Date(request.reportMetadata?.generatedAt ?? "");
-        const sharedAt = new Date(request.reportMetadata?.customerSharedAt ?? "");
-        const requestDate = new Date(request.createdAt ?? "");
-
-        const resolvedRequestDate = Number.isNaN(requestDate.getTime())
-          ? sharedAt
-          : requestDate;
-
-        return {
-          request,
-          generatedAt,
-          sharedAt,
-          requestDate: resolvedRequestDate,
-          hasGeneratedReport: !Number.isNaN(generatedAt.getTime()),
-        };
-      })
-      .filter(({ hasGeneratedReport, sharedAt }) => {
-        if (!hasGeneratedReport || Number.isNaN(sharedAt.getTime())) {
-          return false;
-        }
-
-        return (
-          sharedAt.getFullYear() === billingYear &&
-          sharedAt.getMonth() === billingMonthIndex
-        );
-      })
-      .sort((first, second) => first.requestDate.getTime() - second.requestDate.getTime());
-
-    const rows: MonthSummaryRow[] = [];
-
-    monthRequests.forEach(({ request, requestDate }) => {
-      const verifierName = resolveRequestVerifierName(request);
-      const userName =
-        (request.delegateName || "").trim() ||
-        (request.createdByName || "").trim() ||
-        "-";
-      const serviceQuantityById = new Map<string, number>();
-      const serviceQuantityByName = new Map<string, number>();
-
-      (request.candidateFormResponses ?? []).forEach((serviceResponse) => {
-        const serviceId = (serviceResponse.serviceId || "").trim();
-        const serviceNameKey = (serviceResponse.serviceName || "").trim().toLowerCase();
-        const usageCount = normalizeServiceUsageCount(serviceResponse.serviceEntryCount);
-
-        if (serviceId) {
-          const existing = serviceQuantityById.get(serviceId) ?? 0;
-          serviceQuantityById.set(serviceId, Math.max(existing, usageCount));
-        }
-
-        if (serviceNameKey) {
-          const existing = serviceQuantityByName.get(serviceNameKey) ?? 0;
-          serviceQuantityByName.set(serviceNameKey, Math.max(existing, usageCount));
-        }
-      });
-
-      const selectedServices =
-        request.selectedServices?.map((service) => ({
-          serviceId: service.serviceId || "",
-          serviceName: service.serviceName || "Unknown Service",
-          currency: service.currency || request.invoiceSnapshot?.currency || "INR",
-          price: roundMoney(Number(service.price) || 0),
-        })) ?? [];
-
-      const snapshotServices =
-        request.invoiceSnapshot?.items?.map((service) => ({
-          serviceId: service.serviceId || "",
-          serviceName: service.serviceName || "Unknown Service",
-          currency: request.invoiceSnapshot?.currency || "INR",
-          price: roundMoney(Number(service.price) || 0),
-        })) ?? [];
-
-      const services = selectedServices.length > 0 ? selectedServices : snapshotServices;
-      const normalizedServices = services.length > 0
-        ? services
-        : [{ serviceId: "", serviceName: "Service Not Available", currency: request.invoiceSnapshot?.currency || "INR", price: 0 }];
-
-      const requestServicesByCurrency = new Map<
-        string,
-        Map<string, { serviceName: string; usageCount: number; subtotal: number }>
-      >();
-
-      normalizedServices.forEach((service, serviceIndex) => {
-        const normalizedServiceId = (service.serviceId || "").trim();
-        const normalizedServiceName = (service.serviceName || "").trim().toLowerCase();
-        const matchedInvoiceRate =
-          (normalizedServiceId ? invoiceRatesByServiceId.get(normalizedServiceId) : undefined) ??
-          invoiceRatesByServiceName.get(normalizedServiceName);
-        const usageCount = normalizeServiceUsageCount(
-          (normalizedServiceId ? serviceQuantityById.get(normalizedServiceId) : undefined) ??
-            serviceQuantityByName.get(normalizedServiceName) ??
-            1,
-        );
-
-        const resolvedCurrency = (matchedInvoiceRate?.currency || service.currency || "INR").toUpperCase();
-        const unitPrice = roundMoney(Number(matchedInvoiceRate?.price ?? service.price) || 0);
-        const serviceSubtotal = roundMoney(unitPrice * usageCount);
-        const resolvedServiceName =
-          matchedInvoiceRate?.serviceName || service.serviceName || "Service Not Available";
-        const serviceKey =
-          normalizedServiceId ||
-          normalizedServiceName ||
-          `${resolvedServiceName.toLowerCase()}-${serviceIndex}`;
-
-        let currencyServices = requestServicesByCurrency.get(resolvedCurrency);
-        if (!currencyServices) {
-          currencyServices = new Map();
-          requestServicesByCurrency.set(resolvedCurrency, currencyServices);
-        }
-
-        const existingService = currencyServices.get(serviceKey);
-        if (existingService) {
-          existingService.usageCount += usageCount;
-          existingService.subtotal = roundMoney(existingService.subtotal + serviceSubtotal);
-        } else {
-          currencyServices.set(serviceKey, {
-            serviceName: resolvedServiceName,
-            usageCount,
-            subtotal: serviceSubtotal,
-          });
-        }
-      });
-
-      [...requestServicesByCurrency.entries()]
-        .sort(([firstCurrency], [secondCurrency]) =>
-          firstCurrency.localeCompare(secondCurrency),
-        )
-        .forEach(([currency, serviceEntries]) => {
-          const services = [...serviceEntries.values()];
-          const serviceName = services
-            .map((entry) =>
-              entry.usageCount > 1
-                ? `${entry.serviceName} x${entry.usageCount}`
-                : entry.serviceName,
-            )
-            .join(", ");
-          const priceWithoutGst = roundMoney(
-            services.reduce((sum, entry) => sum + entry.subtotal, 0),
-          );
-          const gstAmount = selectedInvoice.gstEnabled
-            ? roundMoney((priceWithoutGst * gstRate) / 100)
-            : 0;
-
-          rows.push({
-            srNo: rows.length + 1,
-            requestId: request._id,
-            requestedAt: Number.isNaN(requestDate.getTime())
-              ? ""
-              : requestDate.toISOString(),
-            candidateName: request.candidateName || "-",
-            userName,
-            verifierName,
-            requestStatus: request.status || "pending",
-            serviceName,
-            currency,
-            priceWithoutGst,
-            gstAmount,
-            priceWithGst: roundMoney(priceWithoutGst + gstAmount),
-          });
-        });
-    });
-
-    return rows;
-  }, [requestItems, selectedInvoice]);
-
-  const selectedMonthRequestCount = useMemo(
-    () => new Set(selectedMonthRequestRows.map((row) => row.requestId)).size,
-    [selectedMonthRequestRows],
-  );
-
-  const selectedMonthSummaryTotals = useMemo(() => {
-    const totals: Record<string, InvoiceTotalWithGst> = {};
-
-    selectedMonthRequestRows.forEach((row) => {
-      const existing = totals[row.currency];
-      if (!existing) {
-        totals[row.currency] = {
-          currency: row.currency,
-          subtotal: row.priceWithoutGst,
-          gstAmount: row.gstAmount,
-          total: row.priceWithGst,
-        };
-        return;
-      }
-
-      existing.subtotal = roundMoney(existing.subtotal + row.priceWithoutGst);
-      existing.gstAmount = roundMoney(existing.gstAmount + row.gstAmount);
-      existing.total = roundMoney(existing.total + row.priceWithGst);
-    });
-
-    return Object.values(totals).sort((first, second) =>
-      first.currency.localeCompare(second.currency),
-    );
-  }, [selectedMonthRequestRows]);
+  const selectedMonthRequestRows = monthlySummary?.rows ?? [];
+  const selectedMonthRequestCount = monthlySummary?.totalRequests ?? 0;
+  const selectedMonthSummaryTotals = monthlySummary?.totalsByCurrency ?? [];
 
   useEffect(() => {
     if (!paymentInvoice) {
@@ -1686,8 +1598,13 @@ export default function CustomerInvoicesPage() {
               </BlockCard>
 
               {/* Synced Summary UI with Admin */}
-              <BlockCard className="customer-invoice-summary-card">
-                <div style={{ overflowX: "auto" }}>
+              {loadingMonthlySummary ? (
+                <BlockCard className="customer-invoice-summary-card">
+                  <p style={{ margin: 0, color: "#64748B" }}>Loading billable summary...</p>
+                </BlockCard>
+              ) : monthlySummary ? (
+                <BlockCard className="customer-invoice-summary-card">
+                  <div style={{ overflowX: "auto" }}>
                   <article
                     style={{
                       minWidth: "100%",
@@ -1728,8 +1645,8 @@ export default function CustomerInvoicesPage() {
                             Billable Requests Summary
                           </h2>
                           <div style={{ marginTop: "0.35rem", color: "#4B5563", fontSize: "0.95rem" }}>
-                            <div><strong>Billing Month:</strong> {formatBillingMonth(selectedInvoice.billingMonth)}</div>
-                            <div><strong>Billing Period:</strong> {formatBillingPeriod(selectedInvoice.billingMonth)}</div>
+                            <div><strong>Billing Month:</strong> {monthlySummary.billingMonthLabel}</div>
+                            <div><strong>Billing Period:</strong> {monthlySummary.billingPeriod}</div>
                             <div><strong>Total Billable Requests:</strong> {selectedMonthRequestCount}</div>
                           </div>
                         </div>
@@ -1773,36 +1690,36 @@ export default function CustomerInvoicesPage() {
                           <h4 style={{ margin: "0 0 0.35rem", color: "#1F4597", fontSize: "1.15rem" }}>
                             Customer Details - Enterprise Details
                           </h4>
-                          <div><strong>Company Name:</strong> {selectedInvoice.enterpriseDetails.companyName || "-"}</div>
-                          <div><strong>Login Email:</strong> {selectedInvoice.enterpriseDetails.loginEmail || "-"}</div>
-                          <div><strong>GSTIN:</strong> {selectedInvoice.enterpriseDetails.gstin || "-"}</div>
-                          <div><strong>CIN / Registration:</strong> {selectedInvoice.enterpriseDetails.cinRegistrationNumber || "-"}</div>
-                          <div><strong>Address:</strong> {selectedInvoice.enterpriseDetails.address || "-"}</div>
-                          <div><strong>Invoice Email:</strong> {selectedInvoice.enterpriseDetails.invoiceEmail || "-"}</div>
+                          <div><strong>Company Name:</strong> {monthlySummary.enterpriseDetails.companyName || "-"}</div>
+                          <div><strong>Login Email:</strong> {monthlySummary.enterpriseDetails.loginEmail || "-"}</div>
+                          <div><strong>GSTIN:</strong> {monthlySummary.enterpriseDetails.gstin || "-"}</div>
+                          <div><strong>CIN / Registration:</strong> {monthlySummary.enterpriseDetails.cinRegistrationNumber || "-"}</div>
+                          <div><strong>Address:</strong> {monthlySummary.enterpriseDetails.address || "-"}</div>
+                          <div><strong>Invoice Email:</strong> {monthlySummary.enterpriseDetails.invoiceEmail || "-"}</div>
                           <div>
                             <strong>Billing same as company:</strong>{" "}
-                            {selectedInvoice.enterpriseDetails.billingSameAsCompany ? "Yes" : "No"}
+                            {monthlySummary.enterpriseDetails.billingSameAsCompany ? "Yes" : "No"}
                           </div>
-                          <div><strong>Billing Address:</strong> {selectedInvoice.enterpriseDetails.billingAddress || "-"}</div>
+                          <div><strong>Billing Address:</strong> {monthlySummary.enterpriseDetails.billingAddress || "-"}</div>
                         </div>
 
                         <div>
                           <h4 style={{ margin: "0 0 0.35rem", color: "#1F4597", fontSize: "1.15rem" }}>
                             Cluso Infolink Details
                           </h4>
-                          <div><strong>Company Name:</strong> {selectedInvoice.clusoDetails.companyName || "-"}</div>
-                          <div><strong>Login Email:</strong> {selectedInvoice.clusoDetails.loginEmail || "-"}</div>
-                          <div><strong>GSTIN:</strong> {selectedInvoice.clusoDetails.gstin || "-"}</div>
-                          <div><strong>CIN / Registration:</strong> {selectedInvoice.clusoDetails.cinRegistrationNumber || "-"}</div>
-                          <div><strong>SAC Code:</strong> {selectedInvoice.clusoDetails.sacCode || "-"}</div>
-                          <div><strong>LTU Code:</strong> {selectedInvoice.clusoDetails.ltuCode || "-"}</div>
-                          <div><strong>Address:</strong> {selectedInvoice.clusoDetails.address || "-"}</div>
-                          <div><strong>Invoice Email:</strong> {selectedInvoice.clusoDetails.invoiceEmail || "-"}</div>
+                          <div><strong>Company Name:</strong> {monthlySummary.clusoDetails.companyName || "-"}</div>
+                          <div><strong>Login Email:</strong> {monthlySummary.clusoDetails.loginEmail || "-"}</div>
+                          <div><strong>GSTIN:</strong> {monthlySummary.clusoDetails.gstin || "-"}</div>
+                          <div><strong>CIN / Registration:</strong> {monthlySummary.clusoDetails.cinRegistrationNumber || "-"}</div>
+                          <div><strong>SAC Code:</strong> {monthlySummary.clusoDetails.sacCode || "-"}</div>
+                          <div><strong>LTU Code:</strong> {monthlySummary.clusoDetails.ltuCode || "-"}</div>
+                          <div><strong>Address:</strong> {monthlySummary.clusoDetails.address || "-"}</div>
+                          <div><strong>Invoice Email:</strong> {monthlySummary.clusoDetails.invoiceEmail || "-"}</div>
                           <div>
                             <strong>Billing same as company:</strong>{" "}
-                            {selectedInvoice.clusoDetails.billingSameAsCompany ? "Yes" : "No"}
+                            {monthlySummary.clusoDetails.billingSameAsCompany ? "Yes" : "No"}
                           </div>
-                          <div><strong>Billing Address:</strong> {selectedInvoice.clusoDetails.billingAddress || "-"}</div>
+                          <div><strong>Billing Address:</strong> {monthlySummary.clusoDetails.billingAddress || "-"}</div>
                         </div>
                       </section>
 
@@ -1830,8 +1747,8 @@ export default function CustomerInvoicesPage() {
                                   <th style={{ padding: "0.35rem 0.2rem", width: "8%" }}>Currency</th>
                                   <th style={{ padding: "0.35rem 0.2rem", width: "9%" }}>Price (Excl. GST)</th>
                                   <th style={{ padding: "0.35rem 0.2rem", width: "7%" }}>
-                                    {selectedInvoice.gstEnabled
-                                      ? `GST @${clampGstRate(selectedInvoice.gstRate)}%`
+                                    {monthlySummary.gstEnabled
+                                      ? `GST @${clampGstRate(monthlySummary.gstRate)}%`
                                       : "GST"}
                                   </th>
                                   <th style={{ padding: "0.35rem 0.2rem", width: "8%" }}>Price (Incl. GST)</th>
@@ -1849,15 +1766,15 @@ export default function CustomerInvoicesPage() {
                                     <td style={{ padding: "0.35rem 0.2rem" }}>{row.serviceName}</td>
                                     <td style={{ padding: "0.35rem 0.2rem" }}>{row.currency}</td>
                                     <td style={{ padding: "0.35rem 0.2rem", fontWeight: 700 }}>
-                                      {formatMoney(row.priceWithoutGst, row.currency)}
+                                      {formatMoney(row.subtotal, row.currency)}
                                     </td>
                                     <td style={{ padding: "0.35rem 0.2rem", fontWeight: 700 }}>
-                                      {selectedInvoice.gstEnabled
+                                      {monthlySummary.gstEnabled
                                         ? formatMoney(row.gstAmount, row.currency)
                                         : "-"}
                                     </td>
                                     <td style={{ padding: "0.35rem 0.2rem", fontWeight: 700 }}>
-                                      {formatMoney(row.priceWithGst, row.currency)}
+                                      {formatMoney(row.total, row.currency)}
                                     </td>
                                   </tr>
                                 ))}
@@ -1875,8 +1792,8 @@ export default function CustomerInvoicesPage() {
                                 <th style={{ padding: "0.35rem 0.2rem" }}>Currency</th>
                                 <th style={{ padding: "0.35rem 0.2rem" }}>Sub Total</th>
                                 <th style={{ padding: "0.35rem 0.2rem" }}>
-                                  {selectedInvoice.gstEnabled
-                                    ? `GST @${clampGstRate(selectedInvoice.gstRate)}%`
+                                  {monthlySummary.gstEnabled
+                                    ? `GST @${clampGstRate(monthlySummary.gstRate)}%`
                                     : "GST"}
                                 </th>
                                 <th style={{ padding: "0.35rem 0.2rem" }}>Total</th>
@@ -1890,7 +1807,7 @@ export default function CustomerInvoicesPage() {
                                     {formatMoney(row.subtotal, row.currency)}
                                   </td>
                                   <td style={{ padding: "0.35rem 0.2rem", fontWeight: 700 }}>
-                                    {selectedInvoice.gstEnabled
+                                    {monthlySummary.gstEnabled
                                       ? formatMoney(row.gstAmount, row.currency)
                                       : "-"}
                                   </td>
@@ -1905,8 +1822,9 @@ export default function CustomerInvoicesPage() {
                       ) : null}
                     </div>
                   </article>
-                </div>
-              </BlockCard>
+                  </div>
+                </BlockCard>
+              ) : null}
             </>
           ) : (
             <div className="customer-invoice-empty-card" style={{ background: "white", border: "1px solid #E2E8F0", borderRadius: "16px", padding: "4rem 2rem", textAlign: "center", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", boxShadow: "0 4px 6px -1px rgba(0,0,0,0.03)" }}>
@@ -2072,18 +1990,25 @@ export default function CustomerInvoicesPage() {
                     <div style={{ color: "#0F766E", fontSize: "0.8rem" }}>
                       File: {paymentInvoice.paymentProof.screenshotFileName || "Receipt screenshot"}
                     </div>
-                    <img
-                      src={paymentInvoice.paymentProof.screenshotData}
-                      alt="Uploaded payment receipt"
-                      style={{
-                        width: "min(320px, 100%)",
-                        border: "1px solid #A7F3D0",
-                        borderRadius: "10px",
-                        background: "#FFFFFF",
-                        padding: "0.25rem",
-                        objectFit: "contain",
-                      }}
-                    />
+                    {loadingPaymentProofInvoiceId === paymentInvoice.id ? (
+                      <div style={{ color: "#0F766E", fontSize: "0.78rem", fontWeight: 600 }}>
+                        Loading uploaded receipt preview...
+                      </div>
+                    ) : null}
+                    {paymentInvoice.paymentProof.screenshotData ? (
+                      <img
+                        src={paymentInvoice.paymentProof.screenshotData}
+                        alt="Uploaded payment receipt"
+                        style={{
+                          width: "min(320px, 100%)",
+                          border: "1px solid #A7F3D0",
+                          borderRadius: "10px",
+                          background: "#FFFFFF",
+                          padding: "0.25rem",
+                          objectFit: "contain",
+                        }}
+                      />
+                    ) : null}
 
                     {paymentInvoice.paymentProof.relatedFiles.length > 0 ? (
                       <div
@@ -2099,7 +2024,9 @@ export default function CustomerInvoicesPage() {
                         </div>
                         <div style={{ display: "grid", gap: "0.6rem" }}>
                           {paymentInvoice.paymentProof.relatedFiles.map((relatedFile, index) => {
-                            const isImage = relatedFile.fileMimeType.startsWith("image/");
+                            const hasFileData = Boolean(relatedFile.fileData);
+                            const isImage =
+                              relatedFile.fileMimeType.startsWith("image/") && hasFileData;
                             return (
                               <div
                                 key={`${paymentInvoice.id}-related-file-${index}`}
@@ -2118,23 +2045,29 @@ export default function CustomerInvoicesPage() {
                                 <div style={{ color: "#0F766E", fontSize: "0.75rem" }}>
                                   Uploaded: {formatDateTime(relatedFile.uploadedAt)}
                                 </div>
-                                <a
-                                  href={relatedFile.fileData}
-                                  download={relatedFile.fileName || `related-file-${index + 1}`}
-                                  style={{
-                                    border: "1px solid #93C5FD",
-                                    background: "#EFF6FF",
-                                    color: "#1D4ED8",
-                                    borderRadius: "8px",
-                                    fontSize: "0.76rem",
-                                    fontWeight: 700,
-                                    padding: "0.32rem 0.55rem",
-                                    textDecoration: "none",
-                                    width: "fit-content",
-                                  }}
-                                >
-                                  Open or Download
-                                </a>
+                                {hasFileData ? (
+                                  <a
+                                    href={relatedFile.fileData}
+                                    download={relatedFile.fileName || `related-file-${index + 1}`}
+                                    style={{
+                                      border: "1px solid #93C5FD",
+                                      background: "#EFF6FF",
+                                      color: "#1D4ED8",
+                                      borderRadius: "8px",
+                                      fontSize: "0.76rem",
+                                      fontWeight: 700,
+                                      padding: "0.32rem 0.55rem",
+                                      textDecoration: "none",
+                                      width: "fit-content",
+                                    }}
+                                  >
+                                    Open or Download
+                                  </a>
+                                ) : (
+                                  <div style={{ color: "#0F766E", fontSize: "0.74rem" }}>
+                                    Loading file preview...
+                                  </div>
+                                )}
                                 {isImage ? (
                                   <img
                                     src={relatedFile.fileData}
@@ -2661,18 +2594,25 @@ export default function CustomerInvoicesPage() {
                         {removingPaymentReceipt ? "Deleting..." : "Delete Previous Receipt"}
                       </button>
                     </div>
-                    <img
-                      src={paymentInvoice.paymentProof.screenshotData}
-                      alt="Previously uploaded payment receipt"
-                      style={{
-                        width: "min(220px, 100%)",
-                        border: "1px solid #CBD5E1",
-                        borderRadius: "10px",
-                        background: "#FFFFFF",
-                        padding: "0.25rem",
-                        objectFit: "contain",
-                      }}
-                    />
+                    {loadingPaymentProofInvoiceId === paymentInvoice.id ? (
+                      <div style={{ color: "#475569", fontSize: "0.78rem" }}>
+                        Loading previously uploaded receipt preview...
+                      </div>
+                    ) : null}
+                    {paymentInvoice.paymentProof.screenshotData ? (
+                      <img
+                        src={paymentInvoice.paymentProof.screenshotData}
+                        alt="Previously uploaded payment receipt"
+                        style={{
+                          width: "min(220px, 100%)",
+                          border: "1px solid #CBD5E1",
+                          borderRadius: "10px",
+                          background: "#FFFFFF",
+                          padding: "0.25rem",
+                          objectFit: "contain",
+                        }}
+                      />
+                    ) : null}
                   </div>
                 ) : null}
 

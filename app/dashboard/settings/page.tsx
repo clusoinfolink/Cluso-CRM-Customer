@@ -15,34 +15,6 @@ const COUNTRY_OPTIONS = ["India", "United Arab Emirates", "United States", "Unit
 
 const PHONE_CODE_OPTIONS = ["India (+91)", "UAE (+971)", "US (+1)", "UK (+44)", "Singapore (+65)"];
 
-const HEARD_ABOUT_OPTIONS = [
-  "Google / Search",
-  "LinkedIn",
-  "Client referral",
-  "Email campaign",
-  "Industry event",
-  "Other",
-];
-
-const YEARLY_BACKGROUND_OPTIONS = [
-  "1 - 25",
-  "26 - 100",
-  "101 - 250",
-  "251 - 500",
-  "500+",
-];
-
-const INDUSTRY_OPTIONS = [
-  "Information Technology",
-  "Banking / Financial Services",
-  "Healthcare",
-  "Manufacturing",
-  "Retail / E-commerce",
-  "Staffing / Recruitment",
-  "Education",
-  "Other",
-];
-
 function createEmptyProfile(): PartnerProfile {
   return {
     companyInformation: {
@@ -129,10 +101,7 @@ function isProfileComplete(profile: PartnerProfile) {
       profile.primaryContactInformation.lastName.trim() &&
       profile.primaryContactInformation.designation.trim() &&
       isEmailLike(profile.primaryContactInformation.email) &&
-      profile.primaryContactInformation.mobilePhone.number.trim() &&
-      profile.additionalQuestions.heardAboutUs.trim() &&
-      profile.additionalQuestions.yearlyBackgroundsExpected.trim() &&
-      profile.additionalQuestions.primaryIndustry.trim(),
+      profile.primaryContactInformation.mobilePhone.number.trim(),
   );
 }
 
@@ -982,119 +951,6 @@ export default function SettingsPage() {
                   onChange={(e) => updatePhone("whatsappPhone", "number", e.target.value)}
                 />
               </div>
-            </div>
-          </section>
-
-          <section className="settings-form-section">
-            <h3 className="settings-form-heading" style={{ fontSize: "0.98rem", color: "#2D405E", margin: 0, fontWeight: 600, display: "flex", alignItems: "center", gap: "0.4rem" }}>Additional Questions</h3>
-
-            <div className="settings-grid one-col">
-              <div>
-                <label className="label" htmlFor="heard-about">
-                  How did you hear about us? *
-                </label>
-                <select
-                  id="heard-about"
-                  className="input"
-                  value={profile.additionalQuestions.heardAboutUs}
-                  onChange={(e) =>
-                    setProfile((prev) => ({
-                      ...prev,
-                      additionalQuestions: {
-                        ...prev.additionalQuestions,
-                        heardAboutUs: e.target.value,
-                      },
-                    }))
-                  }
-                  required
-                >
-                  <option value="">Select source</option>
-                  {HEARD_ABOUT_OPTIONS.map((option) => (
-                    <option key={option} value={option}>
-                      {option}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-
-            <div className="settings-grid two-col">
-              <div>
-                <label className="label" htmlFor="yearly-backgrounds">
-                  Approximate backgrounds expected per year *
-                </label>
-                <select
-                  id="yearly-backgrounds"
-                  className="input"
-                  value={profile.additionalQuestions.yearlyBackgroundsExpected}
-                  onChange={(e) =>
-                    setProfile((prev) => ({
-                      ...prev,
-                      additionalQuestions: {
-                        ...prev.additionalQuestions,
-                        yearlyBackgroundsExpected: e.target.value,
-                      },
-                    }))
-                  }
-                  required
-                >
-                  <option value="">Select range</option>
-                  {YEARLY_BACKGROUND_OPTIONS.map((option) => (
-                    <option key={option} value={option}>
-                      {option}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="label" htmlFor="promo-code">
-                  Promo Code (if any)
-                </label>
-                <input
-                  id="promo-code"
-                  className="input"
-                  placeholder="Enter code"
-                  value={profile.additionalQuestions.promoCode}
-                  onChange={(e) =>
-                    setProfile((prev) => ({
-                      ...prev,
-                      additionalQuestions: {
-                        ...prev.additionalQuestions,
-                        promoCode: e.target.value,
-                      },
-                    }))
-                  }
-                />
-              </div>
-            </div>
-
-            <div>
-              <label className="label" htmlFor="primary-industry">
-                Primary industry / business type *
-              </label>
-              <select
-                id="primary-industry"
-                className="input"
-                value={profile.additionalQuestions.primaryIndustry}
-                onChange={(e) =>
-                  setProfile((prev) => ({
-                    ...prev,
-                    additionalQuestions: {
-                      ...prev.additionalQuestions,
-                      primaryIndustry: e.target.value,
-                    },
-                  }))
-                }
-                required
-              >
-                <option value="">Select industry</option>
-                {INDUSTRY_OPTIONS.map((industry) => (
-                  <option key={industry} value={industry}>
-                    {industry}
-                  </option>
-                ))}
-              </select>
             </div>
           </section>
 
