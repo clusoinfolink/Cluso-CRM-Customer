@@ -1776,7 +1776,7 @@ body { margin: 0; color: var(--ink); font-family: "Inter", "Plus Jakarta Sans", 
   top: 0;
   bottom: 0;
   left: 0;
-  z-index: 40;
+  z-index: 3000;
   padding: 0;
   border-radius: 0;
   box-shadow: none;
@@ -1869,6 +1869,21 @@ body { margin: 0; color: var(--ink); font-family: "Inter", "Plus Jakarta Sans", 
   align-items: center;
   gap: 1.5rem;
   font-size: 0.9rem;
+}
+
+@media (min-width: 981px) {
+  .admin-sidebar {
+    z-index: 3000;
+  }
+
+  .admin-topbar {
+    z-index: 1500;
+  }
+
+  .account-actions-wrap {
+    position: relative;
+    z-index: 2500;
+  }
 }
 
 .logout-btn {

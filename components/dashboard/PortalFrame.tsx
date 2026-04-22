@@ -9,7 +9,7 @@ import {
   CheckCheck,
   Clipboard,
   ListChecks,
-  MoreHorizontal,
+  Menu,
   LogOut,
   Settings,
   LayoutDashboard,
@@ -516,7 +516,7 @@ export function PortalFrame({ me, onLogout, title, subtitle, children }: PortalF
           {visibleNav.map((item) => {
             const Icon = item.icon;
             return (
-              <div key={item.href} className="relative group flex items-stretch">
+              <div key={item.href} className="relative group z-0 flex items-stretch lg:group-hover:z-[1600]">
                 <Link
                   href={item.href}
                   onClick={() => setIsMobileNavOpen(false)}
@@ -527,7 +527,7 @@ export function PortalFrame({ me, onLogout, title, subtitle, children }: PortalF
                 </Link>
 
                 <div 
-                  className="absolute left-full ml-[0.35rem] top-1/2 w-[270px] -translate-y-1/2 hidden lg:group-hover:flex flex-col z-[100] pointer-events-none scale-95 opacity-0 group-hover:scale-100 group-hover:opacity-100 transition-all duration-200 origin-left"
+                  className="absolute left-full ml-[0.35rem] top-1/2 w-[270px] -translate-y-1/2 hidden lg:group-hover:flex flex-col z-[1700] pointer-events-none scale-95 opacity-0 group-hover:scale-100 group-hover:opacity-100 transition-all duration-200 origin-left"
                 >
                   <div className={`absolute top-1/2 -left-1.5 -translate-y-1/2 w-3 h-3 rotate-45 border-l border-b bg-white dark:bg-slate-900 ${item.theme.border} z-[1] drop-shadow-sm`}></div>
                   
@@ -576,11 +576,11 @@ export function PortalFrame({ me, onLogout, title, subtitle, children }: PortalF
               type="button"
               className="portal-nav-overflow-trigger"
               onClick={() => setIsMobileNavOpen((prev) => !prev)}
-              aria-label="More options"
+              aria-label="Open menu"
               aria-expanded={isMobileNavOpen}
               aria-controls="customer-mobile-nav"
             >
-              <MoreHorizontal size={18} />
+              <Menu size={18} />
             </button>
             <div style={{ display: "grid", gap: "0.15rem" }}>
               <h1 className="admin-topbar-title">{title || "Enterprise Panel"}</h1>
@@ -656,7 +656,7 @@ export function PortalFrame({ me, onLogout, title, subtitle, children }: PortalF
                       borderRadius: "12px",
                       background: "#FFFFFF",
                       boxShadow: "0 14px 30px rgba(45, 64, 94, 0.18)",
-                      zIndex: 30,
+                      zIndex: 1800,
                       display: "grid",
                       gridTemplateRows: "auto 1fr",
                     }}
