@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { AreaChart, Download, FileText, ReceiptText, TrendingUp, Calendar, FileSearch, X } from "lucide-react";
+import { AreaChart, Download, FileText, ReceiptText, TrendingUp, Calendar, FileSearch, X, Printer } from "lucide-react";
 import { PortalFrame } from "@/components/dashboard/PortalFrame";
 import { BlockCard, BlockTitle } from "@/components/ui/blocks"; 
 import { MonthPicker } from "@/components/MonthPicker";
@@ -367,6 +367,7 @@ export default function CustomerInvoicesPage() {
   const overviewCardRefs = useRef<Array<HTMLDivElement | null>>([]);
   const paymentReceiptInputRef = useRef<HTMLInputElement | null>(null);
   const relatedInfoInputRef = useRef<HTMLInputElement | null>(null);
+  const monthlySummaryPrintRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     if (me?.id) fetchInvoices();
@@ -500,6 +501,101 @@ export default function CustomerInvoicesPage() {
       setMessage(reason);
     }
     setDownloadingId(null);
+  }
+
+  function printMonthlySummary() {
+    const summaryElement = monthlySummaryPrintRef.current;
+    if (!summaryElement) {
+      setMessage("Summary is not ready to print yet.");
+      return;
+    }
+
+    const printWindow = window.open("", "_blank", "width=1200,height=900");
+    if (!printWindow) {
+      setMessage("Please allow pop-ups to print summary.");
+      return;
+    }
+
+    const clonedSummary = summaryElement.cloneNode(true) as HTMLElement;
+    clonedSummary
+      .querySelectorAll<HTMLElement>("[data-print-hide='true']")
+      .forEach((node) => node.remove());
+    clonedSummary.setAttribute("data-print-root", "true");
+
+    // Normalize responsive wrappers for print so rows do not overflow and split awkwardly.
+    clonedSummary.querySelectorAll<HTMLElement>("div").forEach((node) => {
+      if (node.style.overflowX === "auto") {
+        node.style.overflowX = "visible";
+      }
+      if (node.style.minWidth) {
+        node.style.minWidth = "0";
+      }
+    });
+
+    clonedSummary.querySelectorAll<HTMLElement>("table").forEach((table) => {
+      table.style.minWidth = "100%";
+      table.style.width = "100%";
+      table.style.tableLayout = "fixed";
+    });
+
+    const printDocument = printWindow.document;
+    printDocument.open();
+    printDocument.write(`
+      <!doctype html>
+      <html>
+        <head>
+          <meta charset="utf-8" />
+          <meta name="viewport" content="width=device-width, initial-scale=1" />
+          <base href="${window.location.origin}/" />
+          <title>Billable Summary</title>
+          <style>
+            :root { color-scheme: only light; }
+            * { box-sizing: border-box; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+            body {
+              margin: 0;
+              padding: 14px;
+              background: #ffffff;
+              font-family: "Times New Roman", Georgia, serif;
+              color: #111827;
+            }
+            img { max-width: 180px; height: auto; }
+            table { width: 100%; border-collapse: collapse; }
+            th, td { vertical-align: top; }
+            [data-print-root="true"] {
+              width: 100% !important;
+              break-inside: auto;
+              page-break-inside: auto;
+              -webkit-box-decoration-break: clone;
+              box-decoration-break: clone;
+            }
+            [data-print-root="true"] > div {
+              -webkit-box-decoration-break: clone;
+              box-decoration-break: clone;
+            }
+            [data-print-root="true"] section,
+            [data-print-root="true"] table,
+            [data-print-root="true"] tr {
+              break-inside: avoid;
+              page-break-inside: avoid;
+            }
+            [data-print-root="true"] th,
+            [data-print-root="true"] td {
+              overflow-wrap: anywhere;
+              word-break: break-word;
+            }
+            @page { size: A4 landscape; margin: 10mm; }
+          </style>
+        </head>
+        <body>${clonedSummary.outerHTML}</body>
+      </html>
+    `);
+    printDocument.close();
+    printWindow.focus();
+    // Delay slightly so the new document and images fully render before printing.
+    window.setTimeout(() => {
+      printWindow.print();
+      printWindow.close();
+    }, 250);
   }
 
   function handleOverviewDotClick(index: number) {
@@ -1606,6 +1702,7 @@ export default function CustomerInvoicesPage() {
                 <BlockCard className="customer-invoice-summary-card">
                   <div style={{ overflowX: "auto" }}>
                   <article
+                    ref={monthlySummaryPrintRef}
                     style={{
                       minWidth: "100%",
                       background: "#F6F2E9",
@@ -1644,6 +1741,23 @@ export default function CustomerInvoicesPage() {
                           >
                             Billable Requests Summary
                           </h2>
+                          <button
+                            type="button"
+                            className="btn btn-secondary"
+                            data-print-hide="true"
+                            onClick={printMonthlySummary}
+                            style={{
+                              marginTop: "0.55rem",
+                              display: "inline-flex",
+                              alignItems: "center",
+                              gap: "0.35rem",
+                              padding: "0.3rem 0.55rem",
+                              fontSize: "0.76rem",
+                            }}
+                          >
+                            <Printer size={14} />
+                            Print Summary
+                          </button>
                           <div style={{ marginTop: "0.35rem", color: "#4B5563", fontSize: "0.95rem" }}>
                             <div><strong>Billing Month:</strong> {monthlySummary.billingMonthLabel}</div>
                             <div><strong>Billing Period:</strong> {monthlySummary.billingPeriod}</div>
@@ -1657,20 +1771,6 @@ export default function CustomerInvoicesPage() {
                           style={{ width: "170px", height: "auto", objectFit: "contain" }}
                         />
                       </header>
-
-                      <p
-                        style={{
-                          margin: "0.8rem 0 0",
-                          color: "#92400E",
-                          fontSize: "0.9rem",
-                          background: "#FEF3C7",
-                          border: "1px solid #FDE68A",
-                          borderRadius: "6px",
-                          padding: "0.55rem 0.7rem",
-                        }}
-                      >
-                        This summary includes only billable requests: reports that were generated and shared to customer in this billing month.
-                      </p>
 
                       <section
                         style={{
@@ -1849,7 +1949,7 @@ export default function CustomerInvoicesPage() {
             inset: 0,
             background: "rgba(2, 6, 23, 0.56)",
             backdropFilter: "blur(2px)",
-            zIndex: 110,
+            zIndex: 10000,
             display: "flex",
             alignItems: "center",
             justifyContent: "center",

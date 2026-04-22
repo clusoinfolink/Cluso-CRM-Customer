@@ -159,6 +159,10 @@ function canOpenSharedReport(item: RequestItem) {
   );
 }
 
+function canAppealReverification(item: RequestItem) {
+  return item.status === "verified";
+}
+
 function canAccessCandidateLinkActions(item: RequestItem) {
   if (item.status === "completed") {
     return true;
@@ -950,8 +954,7 @@ function buildPersonalDetailsFromCandidateResponses(item: RequestItem) {
 
 function buildReportPreviewData(item: RequestItem, viewerName: string) {
   const stored = parseStoredReportData(item.reportData);
-  const hasSharedReport =
-    Boolean(item.reportData) && Boolean(item.reportMetadata?.customerSharedAt);
+  const hasSharedReport = Boolean(item.reportData);
 
   if (hasSharedReport && stored) {
     const services = splitReportSections(stored.services).services;
@@ -1400,6 +1403,7 @@ function RequestsPageContent() {
   const [appealAttachmentFileSize, setAppealAttachmentFileSize] = useState<number | null>(null);
   const [appealAttachmentData, setAppealAttachmentData] = useState("");
   const [submittingAppealRequestId, setSubmittingAppealRequestId] = useState("");
+  const [revokingAppealRequestId, setRevokingAppealRequestId] = useState("");
   const [isRejectSelectorOpen, setIsRejectSelectorOpen] = useState(false);
   const [selectedRejectedFieldKeys, setSelectedRejectedFieldKeys] = useState<string[]>([]);
   const [rejectionComment, setRejectionComment] = useState("");
@@ -1611,6 +1615,9 @@ function RequestsPageContent() {
   );
 
   const activeReportAppeal = activeReportRequest?.reverificationAppeal ?? null;
+  const activeReportCanAppeal = activeReportRequest
+    ? canAppealReverification(activeReportRequest)
+    : false;
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -1720,6 +1727,11 @@ function RequestsPageContent() {
       return;
     }
 
+    if (!canAppealReverification(activeReportRequest)) {
+      setMessage("Appeal is not allowed once validation is completed.");
+      return;
+    }
+
     if (activeReportRequest.reverificationAppeal?.status === "open") {
       setMessage("An appeal is already pending for this request.");
       return;
@@ -1767,6 +1779,55 @@ function RequestsPageContent() {
     await refreshRequests();
   }
 
+  async function revokeReverificationAppealByRequest(requestId: string) {
+    if (!requestId) {
+      return;
+    }
+
+    const requestItem = items.find((item) => item._id === requestId) ?? null;
+    if (!requestItem || requestItem.reverificationAppeal?.status !== "open") {
+      return;
+    }
+
+    const isConfirmed = window.confirm(
+      "Revoke this pending appeal? You can submit a new appeal later if needed.",
+    );
+    if (!isConfirmed) {
+      return;
+    }
+
+    setMessage("");
+    setRevokingAppealRequestId(requestId);
+
+    const response = await fetch("/api/orders", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "revoke-reverification-appeal",
+        requestId,
+      }),
+    });
+
+    const data = (await response.json()) as { message?: string; error?: string };
+    setRevokingAppealRequestId("");
+
+    if (!response.ok) {
+      setMessage(data.error ?? "Could not revoke pending appeal.");
+      return;
+    }
+
+    setMessage(data.message ?? "Pending appeal revoked.");
+    await refreshRequests();
+  }
+
+  async function revokeReverificationAppeal() {
+    if (!activeReportRequest) {
+      return;
+    }
+
+    await revokeReverificationAppealByRequest(activeReportRequest._id);
+  }
+
   function openSharedReport(item: RequestItem) {
     const canViewSharedReport = canOpenSharedReport(item);
 
@@ -1786,11 +1847,6 @@ function RequestsPageContent() {
   }
 
   async function downloadSharedReport(item: RequestItem) {
-    if (!item.reportMetadata?.customerSharedAt) {
-      setMessage("Report is not shared with customer portal yet.");
-      return;
-    }
-
     setMessage("");
     setDownloadingReportRequestId(item._id);
 
@@ -1802,9 +1858,11 @@ function RequestsPageContent() {
 
       if (!response.ok) {
         const data = (await response.json().catch(() => null)) as
-          | { error?: string }
+          | { error?: string; details?: string }
           | null;
-        setMessage(data?.error ?? "Could not download report.");
+        const base = data?.error ?? "Could not download report.";
+        const details = data?.details?.trim();
+        setMessage(details ? `${base} (${details})` : base);
         setDownloadingReportRequestId("");
         return;
       }
@@ -3068,6 +3126,7 @@ function RequestsPageContent() {
                   const pendingExtraPaymentApprovals = getPendingExtraPaymentApprovals(item);
                   const pendingExtraPaymentCount = pendingExtraPaymentApprovals.length;
                   const appealServiceLabel = toAppealServiceLabel(item.reverificationAppeal);
+                  const hasPendingAppeal = item.reverificationAppeal?.status === "open";
                   const statusDisplay = getRequestStatusDisplay(item);
                   const reverificationDate = resolveReverificationDate(item);
                   const canViewSharedReport = canOpenSharedReport(item);
@@ -3264,6 +3323,23 @@ function RequestsPageContent() {
                                : "Resend Link"}
                            </button>
 
+                           {hasPendingAppeal ? (
+                             <button
+                               type="button"
+                               className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all shadow-sm ${
+                                 revokingAppealRequestId === item._id
+                                   ? "bg-rose-50 border border-rose-200 text-rose-500 cursor-not-allowed"
+                                   : "bg-rose-100 border border-rose-300 text-rose-800 hover:-translate-y-0.5 hover:bg-rose-200 hover:border-rose-400 hover:text-rose-900 active:translate-y-0 active:scale-[0.98] active:bg-rose-300 active:border-rose-500 active:text-rose-950"
+                               }`}
+                               onClick={() => void revokeReverificationAppealByRequest(item._id)}
+                               disabled={revokingAppealRequestId === item._id}
+                             >
+                               {revokingAppealRequestId === item._id
+                                 ? "Revoking..."
+                                 : "Revoke Pending Appeal"}
+                             </button>
+                           ) : null}
+
                            {item.status === "rejected" && (
                              <button
                                className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all shadow-sm ${
@@ -3306,6 +3382,7 @@ function RequestsPageContent() {
       onLogout={logout}
       title="Request Tracking"
       subtitle="Tabular request workspace with quicker review and less scrolling."
+      focusMode={Boolean(activeResponseRequest || activeReportRequest || candidateLinkEmailPreview)}
     >
       {message ? <p className={`inline-alert ${getAlertTone(message)}`}>{message}</p> : null}
 
@@ -3756,20 +3833,34 @@ function RequestsPageContent() {
                       return;
                     }
 
+                    if (!activeReportCanAppeal) {
+                      setMessage("After 10 days of report given, appeal is not allowed.");
+                      return;
+                    }
+
                     openAppealComposer(activeReportRequest);
                   }}
                   disabled={Boolean(
                     activeReportAppeal?.status === "open" ||
-                      submittingAppealRequestId === activeReportRequest._id,
+                      !activeReportCanAppeal ||
+                      submittingAppealRequestId === activeReportRequest._id ||
+                      revokingAppealRequestId === activeReportRequest._id,
                   )}
                   style={{ padding: "0.42rem 0.75rem", fontSize: "0.84rem" }}
                 >
-                  {activeReportAppeal?.status === "open"
+                  {!activeReportCanAppeal
+                    ? "Appeal Not Allowed"
+                    : activeReportAppeal?.status === "open"
                     ? "Appeal Submitted"
                     : isAppealFormOpen
                       ? "Hide Appeal Form"
                       : "Appeal Reverification"}
                 </button>
+                {!activeReportCanAppeal ? (
+                  <span style={{ fontSize: "0.8rem", color: "#B91C1C", fontWeight: 600 }}>
+                    After 10 days of report given, appeal is not allowed.
+                  </span>
+                ) : null}
 
                 <button
                   type="button"
@@ -3836,10 +3927,28 @@ function RequestsPageContent() {
                     </a>
                   </div>
                 ) : null}
+                <div style={{ marginTop: "0.35rem" }}>
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    onClick={() => void revokeReverificationAppeal()}
+                    disabled={revokingAppealRequestId === activeReportRequest._id}
+                    style={{
+                      padding: "0.35rem 0.65rem",
+                      fontSize: "0.79rem",
+                      borderColor: "#FCA5A5",
+                      color: "#B91C1C",
+                    }}
+                  >
+                    {revokingAppealRequestId === activeReportRequest._id
+                      ? "Revoking..."
+                      : "Revoke Pending Appeal"}
+                  </button>
+                </div>
               </section>
             ) : null}
 
-            {isAppealFormOpen && activeReportAppeal?.status !== "open" ? (
+            {isAppealFormOpen && activeReportAppeal?.status !== "open" && activeReportCanAppeal ? (
               <section
                 style={{
                   border: "1px solid #FECACA",

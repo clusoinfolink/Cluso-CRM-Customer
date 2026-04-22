@@ -159,6 +159,10 @@ function canOpenSharedReport(item: RequestItem) {
   );
 }
 
+function canAppealReverification(item: RequestItem) {
+  return item.status === "verified";
+}
+
 function canAccessCandidateLinkActions(item: RequestItem) {
   if (item.status === "completed") {
     return true;
@@ -950,8 +954,7 @@ function buildPersonalDetailsFromCandidateResponses(item: RequestItem) {
 
 function buildReportPreviewData(item: RequestItem, viewerName: string) {
   const stored = parseStoredReportData(item.reportData);
-  const hasSharedReport =
-    Boolean(item.reportData) && Boolean(item.reportMetadata?.customerSharedAt);
+  const hasSharedReport = Boolean(item.reportData);
 
   if (hasSharedReport && stored) {
     const services = splitReportSections(stored.services).services;
@@ -1609,6 +1612,9 @@ function RequestsPageContent() {
   );
 
   const activeReportAppeal = activeReportRequest?.reverificationAppeal ?? null;
+  const activeReportCanAppeal = activeReportRequest
+    ? canAppealReverification(activeReportRequest)
+    : false;
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -1718,6 +1724,11 @@ function RequestsPageContent() {
       return;
     }
 
+    if (!canAppealReverification(activeReportRequest)) {
+      setMessage("Appeal is not allowed once validation is completed.");
+      return;
+    }
+
     if (activeReportRequest.reverificationAppeal?.status === "open") {
       setMessage("An appeal is already pending for this request.");
       return;
@@ -1784,11 +1795,6 @@ function RequestsPageContent() {
   }
 
   async function downloadSharedReport(item: RequestItem) {
-    if (!item.reportMetadata?.customerSharedAt) {
-      setMessage("Report is not shared with customer portal yet.");
-      return;
-    }
-
     setMessage("");
     setDownloadingReportRequestId(item._id);
 
@@ -1800,9 +1806,11 @@ function RequestsPageContent() {
 
       if (!response.ok) {
         const data = (await response.json().catch(() => null)) as
-          | { error?: string }
+          | { error?: string; details?: string }
           | null;
-        setMessage(data?.error ?? "Could not download report.");
+        const base = data?.error ?? "Could not download report.";
+        const details = data?.details?.trim();
+        setMessage(details ? `${base} (${details})` : base);
         setDownloadingReportRequestId("");
         return;
       }
@@ -3304,6 +3312,7 @@ function RequestsPageContent() {
       onLogout={logout}
       title="Request Tracking"
       subtitle="Tabular request workspace with quicker review and less scrolling."
+      focusMode={Boolean(activeResponseRequest || activeReportRequest || candidateLinkEmailPreview)}
     >
       {message ? <p className={`inline-alert ${getAlertTone(message)}`}>{message}</p> : null}
 
@@ -3754,20 +3763,33 @@ function RequestsPageContent() {
                       return;
                     }
 
+                    if (!activeReportCanAppeal) {
+                      setMessage("After 10 days of report given, appeal is not allowed.");
+                      return;
+                    }
+
                     openAppealComposer(activeReportRequest);
                   }}
                   disabled={Boolean(
                     activeReportAppeal?.status === "open" ||
+                      !activeReportCanAppeal ||
                       submittingAppealRequestId === activeReportRequest._id,
                   )}
                   style={{ padding: "0.42rem 0.75rem", fontSize: "0.84rem" }}
                 >
-                  {activeReportAppeal?.status === "open"
+                  {!activeReportCanAppeal
+                    ? "Appeal Not Allowed"
+                    : activeReportAppeal?.status === "open"
                     ? "Appeal Submitted"
                     : isAppealFormOpen
                       ? "Hide Appeal Form"
                       : "Appeal Reverification"}
                 </button>
+                {!activeReportCanAppeal ? (
+                  <span style={{ fontSize: "0.8rem", color: "#B91C1C", fontWeight: 600 }}>
+                    After 10 days of report given, appeal is not allowed.
+                  </span>
+                ) : null}
 
                 <button
                   type="button"
@@ -3837,7 +3859,7 @@ function RequestsPageContent() {
               </section>
             ) : null}
 
-            {isAppealFormOpen && activeReportAppeal?.status !== "open" ? (
+            {isAppealFormOpen && activeReportAppeal?.status !== "open" && activeReportCanAppeal ? (
               <section
                 style={{
                   border: "1px solid #FECACA",
