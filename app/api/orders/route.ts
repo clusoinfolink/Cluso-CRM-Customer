@@ -961,7 +961,6 @@ async function findDuplicateServiceMatches(params: {
     creatorIds.length > 0
       ? await User.find({ _id: { $in: creatorIds } }).select("name").lean()
       : [];
-
   const creatorNameById = new Map(
     creators.map((creator) => [String(creator._id), creator.name || "Unknown user"]),
   );
@@ -1272,7 +1271,7 @@ async function sendCandidateCorrectionEmail(
   const text = [
     `Dear ${payload.recipientName},`,
     "",
-    `Some submitted details for your verification request from \"${payload.companyName}\" need correction.`,
+    `Some submitted details for your verification request from "${payload.companyName}" need correction.`,
     "",
     "Please login to the candidate portal and edit the highlighted fields, then resubmit:",
     payload.portalUrl,
@@ -1365,6 +1364,18 @@ async function ensureCandidateUser(candidateEmail: string, candidateName: string
     tempPassword,
     blockedByRole: false,
   };
+}
+
+async function regenerateCandidateTemporaryPassword(candidateUserId: string) {
+  const tempPassword = `Cluso${crypto.randomBytes(4).toString("hex")}`;
+  const passwordHash = await bcrypt.hash(tempPassword, 10);
+
+  await User.findOneAndUpdate(
+    { _id: candidateUserId, role: "candidate" },
+    { passwordHash },
+  );
+
+  return tempPassword;
 }
 
 export async function GET(req: NextRequest) {
@@ -1863,7 +1874,15 @@ export async function PATCH(req: NextRequest) {
       });
     }
 
-    const tempPassword = candidateAccount.created ? candidateAccount.tempPassword : null;
+    const isNewUser =
+      candidateAccount.created ||
+      (candidateAccount.candidateUserId &&
+        requestDoc.createdAt &&
+        new Date().getTime() - new Date(requestDoc.createdAt).getTime() < 10 * 60 * 1000);
+
+    const tempPassword = isNewUser
+      ? await regenerateCandidateTemporaryPassword(candidateAccount.candidateUserId!)
+      : null;
 
     const portalUrl = resolveCandidatePortalUrl();
     const emailContent = buildVerificationRequestEmailContent({
@@ -1943,7 +1962,15 @@ export async function PATCH(req: NextRequest) {
 
     const normalizedRequestCandidateUser = String(requestDoc.candidateUser ?? "").trim();
     if (
-      candidateAccount.candidateUserId &&
+      candisNewUser =
+      candidateAccount.created ||
+      (candidateAccount.candidateUserId &&
+        requestDoc.createdAt &&
+        new Date().getTime() - new Date(requestDoc.createdAt).getTime() < 10 * 60 * 1000);
+
+    const tempPassword = isNewUser
+      ? await regenerateCandidateTemporaryPassword(candidateAccount.candidateUserId!)
+     
       normalizedRequestCandidateUser !== candidateAccount.candidateUserId
     ) {
       await VerificationRequest.findByIdAndUpdate(resendCandidateLinkParsed.data.requestId, {
