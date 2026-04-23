@@ -4,6 +4,7 @@ import { FormEvent, useCallback, useEffect, useState } from "react";
 import { UserPlus, Users, Shield, AlertCircle } from "lucide-react";
 import { PortalFrame } from "@/components/dashboard/PortalFrame";
 import { BlockCard } from "@/components/ui/blocks";
+import { LoadingScreen } from "@/components/ui/LoadingScreen";
 import { getAlertTone } from "@/lib/alerts";
 import { usePortalSession } from "@/lib/hooks/usePortalSession";
 
@@ -112,14 +113,12 @@ export default function TeamPage() {
   }, [selectedMemberId, teamMembers]);
 
   const selectedMember = teamMembers.find((member) => member.id === selectedMemberId) ?? null;
-
   if (loading || !me) {
     return (
-      <main className="portal-shell">
-        <BlockCard tone="muted">
-          <p className="block-subtitle">Loading team workspace...</p>
-        </BlockCard>
-      </main>
+      <LoadingScreen
+        title="Loading workspace..."
+        subtitle="Preparing team support guidance"
+      />
     );
   }
 

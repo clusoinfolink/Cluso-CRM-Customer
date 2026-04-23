@@ -4,6 +4,7 @@ import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from "react";
 import { Building2, FileText, KeyRound, Save, ShieldCheck } from "lucide-react";
 import { PortalFrame } from "@/components/dashboard/PortalFrame";
 import { BlockCard, BlockTitle } from "@/components/ui/blocks";
+import { LoadingScreen } from "@/components/ui/LoadingScreen";
 import { getAlertTone } from "@/lib/alerts";
 import { usePortalSession } from "@/lib/hooks/usePortalSession";
 import type { PartnerProfile, PartnerProfileResponse } from "@/lib/types";
@@ -181,11 +182,10 @@ export default function SettingsPage() {
 
   if (loading || !me || profileLoading) {
     return (
-      <main className="portal-shell">
-        <BlockCard tone="muted">
-          <p className="block-subtitle">Loading settings...</p>
-        </BlockCard>
-      </main>
+      <LoadingScreen
+        title="Loading settings..."
+        subtitle="Preparing organization preferences"
+      />
     );
   }
 

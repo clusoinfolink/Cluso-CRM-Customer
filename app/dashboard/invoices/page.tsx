@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { AreaChart, Download, FileText, ReceiptText, TrendingUp, Calendar, FileSearch, X, Printer } from "lucide-react";
 import { PortalFrame } from "@/components/dashboard/PortalFrame";
 import { BlockCard, BlockTitle } from "@/components/ui/blocks"; 
+import { LoadingScreen } from "@/components/ui/LoadingScreen";
 import { MonthPicker } from "@/components/MonthPicker";
 import { usePortalSession } from "@/lib/hooks/usePortalSession";
 import { useRequestsData } from "@/lib/hooks/useRequestsData";
@@ -1123,11 +1124,10 @@ export default function CustomerInvoicesPage() {
 
   if (loading || !me) {
     return (
-      <main className="portal-shell">
-        <BlockCard tone="muted">
-          <p className="block-subtitle">Loading your workspace...</p>
-        </BlockCard>
-      </main>
+      <LoadingScreen
+        title="Loading workspace..."
+        subtitle="Preparing invoice and billing data"
+      />
     );
   }
 

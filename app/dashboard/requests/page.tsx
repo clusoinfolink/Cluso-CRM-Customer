@@ -6,6 +6,7 @@ import { useSearchParams } from "next/navigation";
 import { ListChecks, RotateCw, Search, X } from "lucide-react";
 import { PortalFrame } from "@/components/dashboard/PortalFrame";
 import { BlockCard } from "@/components/ui/blocks";
+import { LoadingScreen } from "@/components/ui/LoadingScreen";
 import { getAlertTone } from "@/lib/alerts";
 import { usePortalSession } from "@/lib/hooks/usePortalSession";
 import { useRequestsData } from "@/lib/hooks/useRequestsData";
@@ -3298,11 +3299,10 @@ function RequestsPageContent() {
 
   if (loading || (requestsEnabled && requestsLoading) || !me || !requestsReady) {
     return (
-      <main className="portal-shell">
-        <BlockCard tone="muted">
-          <p className="block-subtitle">Loading request workspace...</p>
-        </BlockCard>
-      </main>
+      <LoadingScreen
+        title="Loading request workspace..."
+        subtitle="Preparing request tracking data"
+      />
     );
   }
 
@@ -4324,14 +4324,7 @@ function RequestsPageContent() {
 
 export default function RequestsPage() {
   return (
-    <Suspense fallback={
-      <main className="min-h-screen bg-slate-50 p-6 flex items-center justify-center">
-        <div className="text-slate-500 font-medium flex items-center gap-2">
-          <div className="w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
-          Loading workspace...
-        </div>
-      </main>
-    }>
+    <Suspense fallback={<LoadingScreen />}>
       <RequestsPageContent />
     </Suspense>
   );

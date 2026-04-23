@@ -4,6 +4,7 @@ import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { ClipboardPlus, Sparkles } from "lucide-react";
 import { PortalFrame } from "@/components/dashboard/PortalFrame";
 import { BlockCard, BlockTitle } from "@/components/ui/blocks";
+import { LoadingScreen } from "@/components/ui/LoadingScreen";
 import { getAlertTone } from "@/lib/alerts";
 import { usePortalSession } from "@/lib/hooks/usePortalSession";
 
@@ -216,11 +217,10 @@ export default function OrdersPage() {
 
   if (loading || !me) {
     return (
-      <main className="portal-shell">
-        <BlockCard tone="muted">
-          <p className="block-subtitle">Loading order workspace...</p>
-        </BlockCard>
-      </main>
+      <LoadingScreen
+        title="Loading order workspace..."
+        subtitle="Preparing service order creation"
+      />
     );
   }
 

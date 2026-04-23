@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { PortalFrame } from "@/components/dashboard/PortalFrame";
 import { BlockCard } from "@/components/ui/blocks";
+import { LoadingScreen } from "@/components/ui/LoadingScreen";
 import { usePortalSession } from "@/lib/hooks/usePortalSession";
 import { useRequestsData } from "@/lib/hooks/useRequestsData";
 
@@ -60,11 +61,10 @@ export default function DashboardOverviewPage() {
 
   if (loading || (requestsEnabled && requestsLoading) || !me || !requestsReady) {
     return (
-      <main className="portal-shell">
-        <BlockCard tone="muted">
-          <p className="block-subtitle">Loading your workspace...</p>
-        </BlockCard>
-      </main>
+      <LoadingScreen
+        title="Loading workspace..."
+        subtitle="Preparing your enterprise overview"
+      />
     );
   }
 
