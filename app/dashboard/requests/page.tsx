@@ -3716,20 +3716,6 @@ function RequestsPageContent() {
             </div>
 
             <div style={{ display: "grid", gap: "0.45rem" }}>
-              <label className="label" htmlFor="candidate-link-email-text">
-                Email Body (Text)
-              </label>
-              <textarea
-                id="candidate-link-email-text"
-                className="input"
-                value={candidateLinkEmailPreview.text}
-                rows={14}
-                readOnly
-                style={{ whiteSpace: "pre-wrap" }}
-              />
-            </div>
-
-            <div style={{ display: "grid", gap: "0.45rem" }}>
               <label className="label" htmlFor="candidate-link-email-html-preview">
                 Professional Email Layout Preview
               </label>
