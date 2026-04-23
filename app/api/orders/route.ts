@@ -1012,6 +1012,7 @@ type VerificationEmailPayload = {
   companyName: string;
   portalUrl: string;
   tempPassword?: string | null;
+  userId?: string | null;
 };
 
 type VerificationEmailContent = {
@@ -1067,10 +1068,12 @@ function buildVerificationRequestEmailContent(
   const safeCompany = escapeHtml(payload.companyName);
   const safePortalUrl = escapeHtml(payload.portalUrl);
   const safeRecipientEmail = escapeHtml(payload.recipientEmail);
-
-  const loginHint = payload.tempPassword
-    ? `\nYour candidate account was created for this request.\nLogin Email: ${payload.recipientEmail}\nTemporary Password: ${payload.tempPassword}\n`
-    : "";
+  const resolvedUserId = (payload.userId?.trim() || payload.recipientEmail).trim();
+  const safeUserId = escapeHtml(resolvedUserId);
+  const hasTemporaryPassword = Boolean(payload.tempPassword?.trim());
+  const resolvedTempPassword = hasTemporaryPassword
+    ? escapeHtml(payload.tempPassword!.trim())
+    : "Use your existing account password.";
 
   const text = [
     `Dear ${payload.recipientName},`,
@@ -1084,10 +1087,16 @@ function buildVerificationRequestEmailContent(
     "To proceed, we have provided a secure link to our portal where you can submit your information and upload the required documents:",
     "",
     payload.portalUrl,
-    loginHint,
+    "",
+    "Login Credentials:",
+    `User ID: ${resolvedUserId}`,
+    `Temporary Password: ${payload.tempPassword?.trim() || "Use your existing account password."}`,
+    "",
     "We kindly request your cooperation in completing this process at the earliest. All information shared will be handled with strict confidentiality and used solely for verification purposes.",
     "",
     "If you have any questions or require clarification, please feel free to reach out to us.",
+    "",
+    "Important: For security reasons, please change your password after signing in.",
     "",
     "Thank you for your cooperation.",
     "",
@@ -1098,42 +1107,77 @@ function buildVerificationRequestEmailContent(
     .filter(Boolean)
     .join("\n");
 
-  const credentialsHtml = payload.tempPassword
-    ? `<p>Your candidate account was created for this request.<br />Login Email: ${safeRecipientEmail}<br />Temporary Password: ${escapeHtml(payload.tempPassword)}</p>`
-    : "";
-
   const html = `
-    <p>Dear ${safeRecipient},</p>
-    <p>We hope you are doing well.</p>
-    <p>
-      We, Cluso Infolink, a background verification firm, have been requested to collect and verify your
-      information to assess the genuineness of your application.
-    </p>
-    <p>
-      This verification process has been initiated by "${safeCompany}" as part of their standard screening
-      procedure.
-    </p>
-    <p>
-      To proceed, we have provided a secure link to our portal where you can submit your information and upload
-      the required documents:
-    </p>
-    <p><a href="${safePortalUrl}">${safePortalUrl}</a></p>
-    ${credentialsHtml}
-    <p>
-      We kindly request your cooperation in completing this process at the earliest. All information shared will
-      be handled with strict confidentiality and used solely for verification purposes.
-    </p>
-    <p>
-      If you have any questions or require clarification, please feel free to reach out to us.
-    </p>
-    <p>
-      Thank you for your cooperation.
-    </p>
-    <p>
-      Best regards,<br />
-      Cluso Infolink Team<br />
-      Clusosupport@gmail.com
-    </p>
+    <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background:#F8FAFC;padding:20px 0;font-family:Arial,Helvetica,sans-serif;color:#1E293B;">
+      <tr>
+        <td align="center">
+          <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="680" style="max-width:680px;width:100%;background:#FFFFFF;border:1px solid #E2E8F0;border-radius:10px;overflow:hidden;">
+            <tr>
+              <td style="background:#0F172A;color:#FFFFFF;padding:16px 20px;">
+                <div style="font-size:18px;font-weight:700;">Cluso Infolink Verification Portal</div>
+                <div style="font-size:12px;opacity:0.9;margin-top:4px;">Candidate Verification Access Details</div>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:20px;">
+                <p style="margin:0 0 14px;">Dear ${safeRecipient},</p>
+                <p style="margin:0 0 14px;line-height:1.6;">
+                  We hope you are doing well. Cluso Infolink has been requested to verify your information as part of the background screening process initiated by
+                  <strong>${safeCompany}</strong>.
+                </p>
+
+                <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border:1px solid #E2E8F0;border-radius:8px;border-collapse:separate;overflow:hidden;margin:10px 0 14px;">
+                  <tr>
+                    <td colspan="2" style="background:#EFF6FF;color:#1E3A8A;font-weight:700;padding:10px 12px;font-size:14px;">Login Details</td>
+                  </tr>
+                  <tr>
+                    <td style="width:170px;padding:10px 12px;background:#F8FAFC;font-weight:700;border-top:1px solid #E2E8F0;">Portal URL</td>
+                    <td style="padding:10px 12px;border-top:1px solid #E2E8F0;"><a href="${safePortalUrl}" style="color:#2563EB;text-decoration:none;">${safePortalUrl}</a></td>
+                  </tr>
+                  <tr>
+                    <td style="width:170px;padding:10px 12px;background:#F8FAFC;font-weight:700;border-top:1px solid #E2E8F0;">User ID</td>
+                    <td style="padding:10px 12px;border-top:1px solid #E2E8F0;">${safeUserId}</td>
+                  </tr>
+                  <tr>
+                    <td style="width:170px;padding:10px 12px;background:#F8FAFC;font-weight:700;border-top:1px solid #E2E8F0;">Temporary Password</td>
+                    <td style="padding:10px 12px;border-top:1px solid #E2E8F0;">
+                      ${hasTemporaryPassword
+                        ? `<code style="font-family:Consolas,Menlo,monospace;background:#E2E8F0;border-radius:4px;padding:2px 6px;">${resolvedTempPassword}</code>`
+                        : resolvedTempPassword}
+                    </td>
+                  </tr>
+                </table>
+
+                <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse;margin:0 0 14px;">
+                  <tr>
+                    <td style="font-size:14px;line-height:1.6;">
+                      <strong>Next steps:</strong>
+                      <ol style="margin:8px 0 0 18px;padding:0;">
+                        <li>Sign in using the credentials above.</li>
+                        <li>Complete the form and upload required documents.</li>
+                        <li>Change your password immediately after login.</li>
+                      </ol>
+                    </td>
+                  </tr>
+                </table>
+
+                <p style="margin:0 0 12px;line-height:1.6;">
+                  All information shared will be treated as confidential and used only for verification purposes.
+                </p>
+                <p style="margin:0 0 14px;line-height:1.6;">
+                  If you have any questions, please contact us at <a href="mailto:Clusosupport@gmail.com" style="color:#2563EB;text-decoration:none;">Clusosupport@gmail.com</a>.
+                </p>
+                <p style="margin:0;line-height:1.6;">
+                  Best regards,<br />
+                  <strong>Cluso Infolink Team</strong><br />
+                  <span style="color:#475569;">Clusosupport@gmail.com</span>
+                </p>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
   `;
 
   return { subject, text, html };
@@ -1321,6 +1365,18 @@ async function ensureCandidateUser(candidateEmail: string, candidateName: string
     tempPassword,
     blockedByRole: false,
   };
+}
+
+async function regenerateCandidateTemporaryPassword(candidateUserId: string) {
+  const tempPassword = `Cluso${crypto.randomBytes(4).toString("hex")}`;
+  const passwordHash = await bcrypt.hash(tempPassword, 10);
+
+  await User.findOneAndUpdate(
+    { _id: candidateUserId, role: "candidate" },
+    { passwordHash },
+  );
+
+  return tempPassword;
 }
 
 export async function GET(req: NextRequest) {
@@ -1777,7 +1833,7 @@ export async function PATCH(req: NextRequest) {
     };
 
     const requestDoc = await VerificationRequest.findOne(requestFilter)
-      .select("candidateName candidateEmail")
+      .select("candidateName candidateEmail candidateUser")
       .lean();
 
     if (!requestDoc) {
@@ -1794,20 +1850,55 @@ export async function PATCH(req: NextRequest) {
       return NextResponse.json({ error: "Company account not found." }, { status: 404 });
     }
 
+    const candidateAccount = await ensureCandidateUser(
+      candidateEmail,
+      String(requestDoc.candidateName ?? "Candidate").trim() || "Candidate",
+    );
+
+    if (candidateAccount.blockedByRole) {
+      return NextResponse.json(
+        {
+          error:
+            "Candidate login cannot be enabled because this email is already assigned to another user role.",
+        },
+        { status: 400 },
+      );
+    }
+
+    const normalizedRequestCandidateUser = String(requestDoc.candidateUser ?? "").trim();
+    if (
+      candidateAccount.candidateUserId &&
+      normalizedRequestCandidateUser !== candidateAccount.candidateUserId
+    ) {
+      await VerificationRequest.findByIdAndUpdate(previewCandidateEmailParsed.data.requestId, {
+        candidateUser: candidateAccount.candidateUserId,
+      });
+    }
+
+    const tempPassword = candidateAccount.created
+      ? candidateAccount.tempPassword
+      : candidateAccount.candidateUserId
+        ? await regenerateCandidateTemporaryPassword(candidateAccount.candidateUserId)
+        : null;
+
     const portalUrl = resolveCandidatePortalUrl();
     const emailContent = buildVerificationRequestEmailContent({
       recipientName: String(requestDoc.candidateName ?? "Candidate").trim() || "Candidate",
       recipientEmail: candidateEmail,
       companyName: companyProfile.companyName,
       portalUrl,
-      tempPassword: null,
+      tempPassword,
+      userId: candidateEmail,
     });
 
     return NextResponse.json({
       message: "Candidate email preview generated.",
       recipientEmail: candidateEmail,
+      userId: candidateEmail,
+      temporaryPassword: tempPassword,
       subject: emailContent.subject,
       text: emailContent.text,
+      html: emailContent.html,
       portalUrl,
     });
   }
@@ -1876,13 +1967,20 @@ export async function PATCH(req: NextRequest) {
       });
     }
 
+    const tempPassword = candidateAccount.created
+      ? candidateAccount.tempPassword
+      : candidateAccount.candidateUserId
+        ? await regenerateCandidateTemporaryPassword(candidateAccount.candidateUserId)
+        : null;
+
     const portalUrl = resolveCandidatePortalUrl();
     const emailPayload: VerificationEmailPayload = {
       recipientName: String(requestDoc.candidateName ?? "Candidate").trim() || "Candidate",
       recipientEmail: candidateEmail,
       companyName: companyProfile.companyName,
       portalUrl,
-      tempPassword: candidateAccount.created ? candidateAccount.tempPassword : null,
+      tempPassword,
+      userId: candidateEmail,
     };
 
     const emailContent = buildVerificationRequestEmailContent(emailPayload);
@@ -1893,8 +1991,11 @@ export async function PATCH(req: NextRequest) {
         {
           error: `Could not resend candidate email (${emailResult.reason || "email delivery failed"}).`,
           recipientEmail: candidateEmail,
+          userId: candidateEmail,
+          temporaryPassword: tempPassword,
           subject: emailContent.subject,
           text: emailContent.text,
+          html: emailContent.html,
           portalUrl,
         },
         { status: 502 },
@@ -1909,8 +2010,11 @@ export async function PATCH(req: NextRequest) {
     return NextResponse.json({
       message: messageParts.join(" "),
       recipientEmail: candidateEmail,
+      userId: candidateEmail,
+      temporaryPassword: tempPassword,
       subject: emailContent.subject,
       text: emailContent.text,
+      html: emailContent.html,
       portalUrl,
     });
   }

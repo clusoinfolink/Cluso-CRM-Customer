@@ -274,8 +274,11 @@ type CandidateLinkEmailPreview = {
   requestId: string;
   candidateName: string;
   recipientEmail: string;
+  userId: string;
+  temporaryPassword: string;
   subject: string;
   text: string;
+  html: string;
   portalUrl: string;
 };
 
@@ -2200,8 +2203,11 @@ function RequestsPageContent() {
       message?: string;
       error?: string;
       recipientEmail?: string;
+      userId?: string;
+      temporaryPassword?: string;
       subject?: string;
       text?: string;
+      html?: string;
       portalUrl?: string;
     };
     setLoadingCandidateLinkPreviewRequestId("");
@@ -2215,8 +2221,11 @@ function RequestsPageContent() {
       requestId: item._id,
       candidateName: item.candidateName,
       recipientEmail: data.recipientEmail || item.candidateEmail || "-",
+      userId: data.userId || data.recipientEmail || item.candidateEmail || "-",
+      temporaryPassword: data.temporaryPassword || "",
       subject: data.subject || "Background Verification Request",
       text: data.text || "",
+      html: data.html || "",
       portalUrl: data.portalUrl || "",
     });
   }
@@ -2238,8 +2247,11 @@ function RequestsPageContent() {
       message?: string;
       error?: string;
       recipientEmail?: string;
+      userId?: string;
+      temporaryPassword?: string;
       subject?: string;
       text?: string;
+      html?: string;
       portalUrl?: string;
     };
     setResendingCandidateLinkRequestId("");
@@ -2249,8 +2261,11 @@ function RequestsPageContent() {
         requestId: item._id,
         candidateName: item.candidateName,
         recipientEmail: data.recipientEmail || item.candidateEmail || "-",
+        userId: data.userId || data.recipientEmail || item.candidateEmail || "-",
+        temporaryPassword: data.temporaryPassword || "",
         subject: data.subject,
         text: data.text,
+        html: data.html || "",
         portalUrl: data.portalUrl || "",
       });
     }
@@ -3739,9 +3754,40 @@ function RequestsPageContent() {
               />
             </div>
 
+            <div
+              style={{
+                display: "grid",
+                gap: "0.55rem",
+                gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+              }}
+            >
+              <div style={{ display: "grid", gap: "0.35rem" }}>
+                <label className="label" htmlFor="candidate-link-email-user-id">
+                  User ID
+                </label>
+                <input
+                  id="candidate-link-email-user-id"
+                  className="input"
+                  value={candidateLinkEmailPreview.userId}
+                  readOnly
+                />
+              </div>
+              <div style={{ display: "grid", gap: "0.35rem" }}>
+                <label className="label" htmlFor="candidate-link-email-temp-password">
+                  Temporary Password
+                </label>
+                <input
+                  id="candidate-link-email-temp-password"
+                  className="input"
+                  value={candidateLinkEmailPreview.temporaryPassword || "Use existing password"}
+                  readOnly
+                />
+              </div>
+            </div>
+
             <div style={{ display: "grid", gap: "0.45rem" }}>
               <label className="label" htmlFor="candidate-link-email-text">
-                Email Body
+                Email Body (Text)
               </label>
               <textarea
                 id="candidate-link-email-text"
@@ -3751,6 +3797,34 @@ function RequestsPageContent() {
                 readOnly
                 style={{ whiteSpace: "pre-wrap" }}
               />
+            </div>
+
+            <div style={{ display: "grid", gap: "0.45rem" }}>
+              <label className="label" htmlFor="candidate-link-email-html-preview">
+                Professional Email Layout Preview
+              </label>
+              <div
+                id="candidate-link-email-html-preview"
+                style={{
+                  border: "1px solid #D7E2EE",
+                  borderRadius: "12px",
+                  background: "#F8FAFC",
+                  padding: "0.65rem",
+                  maxHeight: "320px",
+                  overflow: "auto",
+                }}
+              >
+                {candidateLinkEmailPreview.html ? (
+                  <div
+                    style={{ background: "#FFFFFF", borderRadius: "10px", overflow: "hidden" }}
+                    dangerouslySetInnerHTML={{ __html: candidateLinkEmailPreview.html }}
+                  />
+                ) : (
+                  <p style={{ margin: 0, color: "#64748B", fontSize: "0.85rem" }}>
+                    No HTML preview available.
+                  </p>
+                )}
+              </div>
             </div>
 
             <div style={{ display: "flex", justifyContent: "space-between", gap: "0.6rem", flexWrap: "wrap" }}>
