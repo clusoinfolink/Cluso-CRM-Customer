@@ -1367,18 +1367,6 @@ async function ensureCandidateUser(candidateEmail: string, candidateName: string
   };
 }
 
-async function regenerateCandidateTemporaryPassword(candidateUserId: string) {
-  const tempPassword = `Cluso${crypto.randomBytes(4).toString("hex")}`;
-  const passwordHash = await bcrypt.hash(tempPassword, 10);
-
-  await User.findOneAndUpdate(
-    { _id: candidateUserId, role: "candidate" },
-    { passwordHash },
-  );
-
-  return tempPassword;
-}
-
 export async function GET(req: NextRequest) {
   const auth = await getCustomerAuthFromRequest(req);
   if (!auth) {
@@ -1875,11 +1863,7 @@ export async function PATCH(req: NextRequest) {
       });
     }
 
-    const tempPassword = candidateAccount.created
-      ? candidateAccount.tempPassword
-      : candidateAccount.candidateUserId
-        ? await regenerateCandidateTemporaryPassword(candidateAccount.candidateUserId)
-        : null;
+    const tempPassword = candidateAccount.created ? candidateAccount.tempPassword : null;
 
     const portalUrl = resolveCandidatePortalUrl();
     const emailContent = buildVerificationRequestEmailContent({
@@ -1967,11 +1951,7 @@ export async function PATCH(req: NextRequest) {
       });
     }
 
-    const tempPassword = candidateAccount.created
-      ? candidateAccount.tempPassword
-      : candidateAccount.candidateUserId
-        ? await regenerateCandidateTemporaryPassword(candidateAccount.candidateUserId)
-        : null;
+    const tempPassword = candidateAccount.created ? candidateAccount.tempPassword : null;
 
     const portalUrl = resolveCandidatePortalUrl();
     const emailPayload: VerificationEmailPayload = {
