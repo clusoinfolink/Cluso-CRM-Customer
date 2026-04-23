@@ -1285,6 +1285,8 @@ type PendingExtraPaymentApprovalEntry = {
   comment: string;
   verifierName: string;
   managerName: string;
+  screenshotFileName: string;
+  screenshotData: string;
 };
 
 function normalizeExtraPaymentApprovalStatus(value: unknown) {
@@ -1358,6 +1360,8 @@ function getPendingExtraPaymentApprovals(item: RequestItem) {
         comment: attempt.comment ?? "",
         verifierName: attempt.verifierName ?? "",
         managerName: attempt.managerName ?? "",
+        screenshotFileName: attempt.screenshotFileName ?? "",
+        screenshotData: attempt.screenshotData ?? "",
       });
     }
   }
@@ -4153,6 +4157,9 @@ function RequestsPageContent() {
                       approval.attemptedAt,
                     );
                     const isDecisioning = paymentDecisioningKey === decisionKey;
+                    const hasScreenshotData = Boolean(approval.screenshotData);
+                    const canPreviewScreenshot =
+                      hasScreenshotData && approval.screenshotData.startsWith("data:image/");
 
                     return (
                       <article
@@ -4187,6 +4194,45 @@ function RequestsPageContent() {
                           <div style={{ color: "#475569", fontSize: "0.82rem" }}>
                             <strong>Team:</strong>{" "}
                             {[approval.verifierName, approval.managerName].filter(Boolean).join(" / ")}
+                          </div>
+                        ) : null}
+
+                        {hasScreenshotData ? (
+                          <div
+                            style={{
+                              border: "1px solid #E2E8F0",
+                              background: "#F8FAFC",
+                              borderRadius: "10px",
+                              padding: "0.5rem",
+                              display: "grid",
+                              gap: "0.45rem",
+                            }}
+                          >
+                            <div style={{ color: "#334155", fontSize: "0.8rem", fontWeight: 600 }}>
+                              Verifier Screenshot
+                            </div>
+                            <a
+                              href={approval.screenshotData}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="btn btn-secondary"
+                              style={{ padding: "0.3rem 0.58rem", fontSize: "0.78rem", width: "fit-content" }}
+                            >
+                              View Screenshot
+                            </a>
+                            {canPreviewScreenshot ? (
+                              <img
+                                src={approval.screenshotData}
+                                alt={approval.screenshotFileName || `${approval.serviceName} verifier proof screenshot`}
+                                style={{
+                                  width: "100%",
+                                  maxWidth: "340px",
+                                  borderRadius: "8px",
+                                  border: "1px solid #CBD5E1",
+                                  background: "#FFFFFF",
+                                }}
+                              />
+                            ) : null}
                           </div>
                         ) : null}
 
