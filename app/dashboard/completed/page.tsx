@@ -3779,7 +3779,7 @@ function RequestsPageContent() {
                 <input
                   id="candidate-link-email-temp-password"
                   className="input"
-                  value={candidateLinkEmailPreview.temporaryPassword || "Use existing password"}
+                  value={candidateLinkEmailPreview.temporaryPassword || "Password visable to candidate"}
                   readOnly
                 />
               </div>

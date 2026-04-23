@@ -28,7 +28,7 @@ SMTP_USER=your_email@gmail.com
 SMTP_PASS=your_email_app_password
 
 # Optional explicit from address
-VERIFICATION_MAIL_FROM="Cluso Infolink Team <clusosupport@gmail.com>"
+VERIFICATION_MAIL_FROM="Cluso Infolink Team <indiaops@cluso.in>"
 ```
 
 ## Run

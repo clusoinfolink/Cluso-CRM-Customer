@@ -1072,7 +1072,7 @@ function buildVerificationRequestEmailContent(
   const hasTemporaryPassword = Boolean(payload.tempPassword?.trim());
   const resolvedTempPassword = hasTemporaryPassword
     ? escapeHtml(payload.tempPassword!.trim())
-    : "Use your existing account password.";
+    : "Password visable to candidate";
 
   const text = [
     `Dear ${payload.recipientName},`,
@@ -1089,7 +1089,7 @@ function buildVerificationRequestEmailContent(
     "",
     "Login Credentials:",
     `User ID: ${resolvedUserId}`,
-    `Temporary Password: ${payload.tempPassword?.trim() || "Use your existing account password."}`,
+      `Temporary Password: ${payload.tempPassword?.trim() || "Password visable to candidate"}`,
     "",
     "We kindly request your cooperation in completing this process at the earliest. All information shared will be handled with strict confidentiality and used solely for verification purposes.",
     "",
@@ -1101,7 +1101,7 @@ function buildVerificationRequestEmailContent(
     "",
     "Best regards,",
     "Cluso Infolink Team",
-    "Clusosupport@gmail.com",
+    "indiaops@cluso.in",
   ]
     .filter(Boolean)
     .join("\n");
@@ -1164,12 +1164,12 @@ function buildVerificationRequestEmailContent(
                   All information shared will be treated as confidential and used only for verification purposes.
                 </p>
                 <p style="margin:0 0 14px;line-height:1.6;">
-                  If you have any questions, please contact us at <a href="mailto:Clusosupport@gmail.com" style="color:#2563EB;text-decoration:none;">Clusosupport@gmail.com</a>.
+                  If you have any questions, please contact us at <a href="mailto:indiaops@cluso.in" style="color:#2563EB;text-decoration:none;">indiaops@cluso.in</a>.
                 </p>
                 <p style="margin:0;line-height:1.6;">
                   Best regards,<br />
                   <strong>Cluso Infolink Team</strong><br />
-                  <span style="color:#475569;">Clusosupport@gmail.com</span>
+                  <span style="color:#475569;">indiaops@cluso.in</span>
                 </p>
               </td>
             </tr>
@@ -1588,8 +1588,7 @@ export async function GET(req: NextRequest) {
       });
 
     const visibleCustomerRejectedFields = (item.customerRejectedFields ?? []).filter((field) =>
-      visibleServiceIds.has(String(field.serviceId)) ||
-      alwaysVisibleResponseServiceIds.has(String(field.serviceId)),
+      visibleServiceIds.has(String(field.serviceId)),
     );
 
     const visibleInvoiceSnapshot = item.invoiceSnapshot
@@ -1874,11 +1873,12 @@ export async function PATCH(req: NextRequest) {
       });
     }
 
-    const isNewUser =
-      candidateAccount.created ||
-      (candidateAccount.candidateUserId &&
+    const recentlyCreated = Boolean(
+      candidateAccount.candidateUserId &&
         requestDoc.createdAt &&
-        new Date().getTime() - new Date(requestDoc.createdAt).getTime() < 10 * 60 * 1000);
+        Date.now() - new Date(requestDoc.createdAt).getTime() < 10 * 60 * 1000,
+    );
+    const isNewUser = candidateAccount.created || recentlyCreated;
 
     const tempPassword = isNewUser
       ? await regenerateCandidateTemporaryPassword(candidateAccount.candidateUserId!)
@@ -1962,15 +1962,7 @@ export async function PATCH(req: NextRequest) {
 
     const normalizedRequestCandidateUser = String(requestDoc.candidateUser ?? "").trim();
     if (
-      candisNewUser =
-      candidateAccount.created ||
-      (candidateAccount.candidateUserId &&
-        requestDoc.createdAt &&
-        new Date().getTime() - new Date(requestDoc.createdAt).getTime() < 10 * 60 * 1000);
-
-    const tempPassword = isNewUser
-      ? await regenerateCandidateTemporaryPassword(candidateAccount.candidateUserId!)
-     
+      candidateAccount.candidateUserId &&
       normalizedRequestCandidateUser !== candidateAccount.candidateUserId
     ) {
       await VerificationRequest.findByIdAndUpdate(resendCandidateLinkParsed.data.requestId, {
@@ -1978,7 +1970,16 @@ export async function PATCH(req: NextRequest) {
       });
     }
 
-    const tempPassword = candidateAccount.created ? candidateAccount.tempPassword : null;
+    const recentlyCreated = Boolean(
+      candidateAccount.candidateUserId &&
+        requestDoc.createdAt &&
+        Date.now() - new Date(requestDoc.createdAt).getTime() < 10 * 60 * 1000,
+    );
+    const isNewUser = candidateAccount.created || recentlyCreated;
+
+    const tempPassword = isNewUser
+      ? await regenerateCandidateTemporaryPassword(candidateAccount.candidateUserId!)
+      : null;
 
     const portalUrl = resolveCandidatePortalUrl();
     const emailPayload: VerificationEmailPayload = {
