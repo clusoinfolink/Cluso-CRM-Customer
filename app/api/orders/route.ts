@@ -1062,6 +1062,7 @@ function resolveCandidatePortalUrl() {
 function buildVerificationRequestEmailContent(
   payload: VerificationEmailPayload,
 ): VerificationEmailContent {
+  const existingPasswordNotice = "Use existing password sent before";
   const subject = "Background Verification Request";
   const safeRecipient = escapeHtml(payload.recipientName);
   const safeCompany = escapeHtml(payload.companyName);
@@ -1072,7 +1073,7 @@ function buildVerificationRequestEmailContent(
   const hasTemporaryPassword = Boolean(payload.tempPassword?.trim());
   const resolvedTempPassword = hasTemporaryPassword
     ? escapeHtml(payload.tempPassword!.trim())
-    : "Password visable to candidate";
+    : existingPasswordNotice;
 
   const text = [
     `Dear ${payload.recipientName},`,
@@ -1089,7 +1090,7 @@ function buildVerificationRequestEmailContent(
     "",
     "Login Credentials:",
     `User ID: ${resolvedUserId}`,
-      `Temporary Password: ${payload.tempPassword?.trim() || "Password visable to candidate"}`,
+    `Temporary Password: ${resolvedTempPassword}`,
     "",
     "We kindly request your cooperation in completing this process at the earliest. All information shared will be handled with strict confidentiality and used solely for verification purposes.",
     "",

@@ -24,6 +24,13 @@ const SUPPORTED_CURRENCY_SET = new Set<string>(SUPPORTED_CURRENCIES);
 const BILLING_MONTH_REGEX = /^\d{4}-(0[1-9]|1[0-2])$/;
 const MAX_PAYMENT_PROOF_BYTES = 5 * 1024 * 1024;
 const MAX_RELATED_PAYMENT_FILES = 5;
+const SERVICE_COUNTRY_FIELD_KEY = "system_service_country";
+const LEGACY_SERVICE_COUNTRY_FIELD_QUESTIONS = new Set([
+  "country",
+  "verification country",
+  "service country",
+  "select verification country for this service",
+]);
 
 const submitPaymentProofSchema = z.object({
   action: z.literal("submit-payment-proof"),
@@ -90,6 +97,10 @@ function asBoolean(value: unknown, fallback = false) {
 
 function normalizeWhitespace(value: string) {
   return value.trim().replace(/\s+/g, " ");
+}
+
+function normalizeServiceLabel(value: string) {
+  return normalizeWhitespace(value).replace(/\s+x\d+$/i, "");
 }
 
 function normalizeGstRate(value: unknown, fallback = 18) {
@@ -499,6 +510,11 @@ type NormalizedServiceSelection = {
   serviceName: string;
   price: number;
   currency: InvoiceLineItem["currency"];
+  countryRates?: Array<{
+    country: string;
+    price: number;
+    currency: InvoiceLineItem["currency"];
+  }>;
 };
 
 type MonthlySummaryRow = {
@@ -509,6 +525,7 @@ type MonthlySummaryRow = {
   verifierName: string;
   requestStatus: string;
   serviceName: string;
+  verificationOrigin: string;
   currency: InvoiceLineItem["currency"];
   subtotal: number;
   gstAmount: number;
@@ -557,6 +574,129 @@ function parseDateValue(value: unknown): Date | null {
 
 function roundMoney(value: number) {
   return Math.round(value * 100) / 100;
+}
+
+function resolveVerificationOrigin(value: unknown) {
+  const normalized = normalizeWhitespace(asString(value));
+  return normalized || "-";
+}
+
+function parseRepeatableValues(rawValue: string) {
+  const trimmed = rawValue.trim();
+  if (!trimmed) {
+    return [] as string[];
+  }
+
+  try {
+    const parsed = JSON.parse(trimmed);
+    if (Array.isArray(parsed)) {
+      return parsed.map((item) => String(item ?? ""));
+    }
+  } catch {
+    // Keep backward compatibility for old non-JSON values.
+  }
+
+  return [rawValue];
+}
+
+function extractCountrySelectionsFromAnswers(answers: unknown) {
+  if (!Array.isArray(answers)) {
+    return [] as string[];
+  }
+
+  const countryAnswer = answers
+    .map((entry) => asRecord(entry))
+    .find((answer) => {
+      const normalizedFieldKey = normalizeWhitespace(asString(answer.fieldKey)).toLowerCase();
+      if (normalizedFieldKey === SERVICE_COUNTRY_FIELD_KEY) {
+        return true;
+      }
+
+      const normalizedQuestion = normalizeWhitespace(asString(answer.question)).toLowerCase();
+      return LEGACY_SERVICE_COUNTRY_FIELD_QUESTIONS.has(normalizedQuestion);
+    });
+
+  if (!countryAnswer || asBoolean(countryAnswer.notApplicable, false)) {
+    return [] as string[];
+  }
+
+  const rawValue = asString(countryAnswer.value);
+  const rawSelections = asBoolean(countryAnswer.repeatable, false)
+    ? parseRepeatableValues(rawValue)
+    : [rawValue];
+
+  return rawSelections
+    .map((entry) => normalizeWhitespace(String(entry ?? "")))
+    .filter(Boolean);
+}
+
+function normalizeServiceEntryCount(value: unknown) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return 1;
+  }
+
+  return Math.max(1, Math.floor(parsed));
+}
+
+function buildServiceCountrySelectionMaps(
+  candidateFormResponses: unknown,
+  fallbackCountry: string,
+) {
+  const byServiceId = new Map<string, string[]>();
+  const byServiceName = new Map<string, string[]>();
+
+  if (!Array.isArray(candidateFormResponses)) {
+    return { byServiceId, byServiceName };
+  }
+
+  for (const responseEntry of candidateFormResponses) {
+    const response = asRecord(responseEntry);
+    const serviceId = normalizeWhitespace(toIdString(response.serviceId));
+    const serviceNameKey = normalizeWhitespace(asString(response.serviceName)).toLowerCase();
+    const entryCount = normalizeServiceEntryCount(response.serviceEntryCount);
+
+    const selectedCountries = extractCountrySelectionsFromAnswers(response.answers);
+    const fallbackSelections = fallbackCountry && fallbackCountry !== "-" ? [fallbackCountry] : [];
+    const countries = selectedCountries.length > 0 ? selectedCountries : fallbackSelections;
+
+    const normalizedCountries =
+      countries.length > 0
+        ? Array.from(
+            { length: entryCount },
+            (_unused, index) => countries[index] || countries[0],
+          ).filter(Boolean)
+        : [];
+
+    if (serviceId && !byServiceId.has(serviceId)) {
+      byServiceId.set(serviceId, normalizedCountries);
+    }
+
+    if (serviceNameKey && !byServiceName.has(serviceNameKey)) {
+      byServiceName.set(serviceNameKey, normalizedCountries);
+    }
+  }
+
+  return { byServiceId, byServiceName };
+}
+
+function resolveServiceVerificationOrigin(
+  serviceId: string,
+  serviceNameKey: string,
+  serviceEntryIndex: number,
+  countrySelections: {
+    byServiceId: Map<string, string[]>;
+    byServiceName: Map<string, string[]>;
+  },
+  fallbackCountry: string,
+) {
+  const selections =
+    (serviceId ? countrySelections.byServiceId.get(serviceId) : undefined) ??
+    countrySelections.byServiceName.get(serviceNameKey) ??
+    [];
+
+  const resolved = selections[serviceEntryIndex] || selections[0] || fallbackCountry;
+  return resolved || "-";
 }
 
 function getBillingMonthRange(billingMonth: string) {
@@ -725,6 +865,7 @@ function normalizeServiceSelections(value: unknown): NormalizedServiceSelection[
       const currency = SUPPORTED_CURRENCY_SET.has(currencyRaw) ? currencyRaw : "INR";
       const priceRaw = Number(raw.price);
       const price = Number.isFinite(priceRaw) && priceRaw >= 0 ? priceRaw : 0;
+      const countryRates = normalizeCountryPricingRates(raw.countryRates);
 
       if (!serviceId || !serviceName) {
         return null;
@@ -735,6 +876,7 @@ function normalizeServiceSelections(value: unknown): NormalizedServiceSelection[
         serviceName,
         price,
         currency,
+        countryRates,
       } as NormalizedServiceSelection;
     })
     .filter((entry): entry is NormalizedServiceSelection => Boolean(entry));
@@ -1011,6 +1153,82 @@ function resolveBillableExtraPaymentAmount(attemptRecord: Record<string, unknown
   return asBoolean(attemptRecord.extraPaymentDone, false) ? roundedAmount : 0;
 }
 
+function normalizeCountryPricingRates(value: unknown) {
+  if (!Array.isArray(value)) {
+    return [] as Array<{
+      country: string;
+      price: number;
+      currency: InvoiceLineItem["currency"];
+    }>;
+  }
+
+  const deduped = new Map<
+    string,
+    { country: string; price: number; currency: InvoiceLineItem["currency"] }
+  >();
+
+  for (const entry of value) {
+    const raw = asRecord(entry);
+    const country = normalizeWhitespace(asString(raw.country));
+    const price = Number(raw.price);
+    const currencyRaw = normalizeWhitespace(asString(raw.currency, "INR")).toUpperCase();
+    const currency = SUPPORTED_CURRENCY_SET.has(currencyRaw)
+      ? (currencyRaw as InvoiceLineItem["currency"])
+      : "INR";
+
+    if (!country || !Number.isFinite(price) || price < 0) {
+      continue;
+    }
+
+    deduped.set(country.toLowerCase(), {
+      country,
+      price: roundMoney(price),
+      currency,
+    });
+  }
+
+  return [...deduped.values()];
+}
+
+function resolveCountryRateForOrigin(
+  service: NormalizedServiceSelection | undefined,
+  verificationOrigin: string,
+) {
+  if (!service || !service.countryRates || service.countryRates.length === 0) {
+    return undefined;
+  }
+
+  const normalizedOrigin = normalizeWhitespace(verificationOrigin).toLowerCase();
+  if (!normalizedOrigin || normalizedOrigin === "-") {
+    return undefined;
+  }
+
+  return service.countryRates.find(
+    (rate) => normalizeWhitespace(rate.country).toLowerCase() === normalizedOrigin,
+  );
+}
+
+function buildServiceSelectionLookups(serviceSelections: unknown) {
+  const byServiceId = new Map<string, NormalizedServiceSelection>();
+  const byServiceName = new Map<string, NormalizedServiceSelection>();
+  const normalizedSelections = normalizeServiceSelections(serviceSelections);
+
+  for (const selection of normalizedSelections) {
+    const serviceId = normalizeWhitespace(selection.serviceId);
+    const serviceNameKey = normalizeWhitespace(selection.serviceName).toLowerCase();
+
+    if (serviceId && !byServiceId.has(serviceId)) {
+      byServiceId.set(serviceId, selection);
+    }
+
+    if (serviceNameKey && !byServiceName.has(serviceNameKey)) {
+      byServiceName.set(serviceNameKey, selection);
+    }
+  }
+
+  return { byServiceId, byServiceName };
+}
+
 function getRequestBillingServiceSelections(request: Record<string, unknown>) {
   const snapshot = asRecord(request.invoiceSnapshot);
   const snapshotServices = normalizeServiceSelections(snapshot.items);
@@ -1034,6 +1252,7 @@ function buildMonthlySummaryRows(
   gstRate: number,
   invoiceLineItems: InvoiceLineItem[] = [],
   packageRates: PackageRateSelection[] = [],
+  companyServiceSelections: unknown = [],
   companyAdminName = "",
 ) {
   const rows: MonthlySummaryRow[] = [];
@@ -1042,6 +1261,9 @@ function buildMonthlySummaryRows(
 
   const invoiceRatesByServiceId = new Map<string, InvoiceLineItem>();
   const invoiceRatesByServiceName = new Map<string, InvoiceLineItem>();
+  const companyServiceLookups = buildServiceSelectionLookups(
+    companyServiceSelections,
+  );
 
   invoiceLineItems.forEach((lineItem) => {
     const serviceId = normalizeWhitespace(lineItem.serviceId);
@@ -1058,6 +1280,7 @@ function buildMonthlySummaryRows(
 
   let srNo = 1;
   for (const request of requests) {
+    const currentSrNo = srNo;
     const requestRecord = asRecord(request);
     const reportMetadata = asRecord(requestRecord.reportMetadata);
     const candidateName = normalizeWhitespace(asString(requestRecord.candidateName)) || `Candidate ${srNo}`;
@@ -1098,6 +1321,13 @@ function buildMonthlySummaryRows(
     }
 
     const requestStatus = normalizeWhitespace(asString(requestRecord.status)) || "pending";
+    const requestCountryFallback = resolveVerificationOrigin(
+      requestRecord.verificationCountry,
+    );
+    const serviceCountrySelections = buildServiceCountrySelectionMaps(
+      requestRecord.candidateFormResponses,
+      requestCountryFallback,
+    );
     const { selectedServices: rawSelectedServices, usesInvoiceSnapshot } =
       getRequestBillingServiceSelections(requestRecord);
     const collapsedBillingServices = usesInvoiceSnapshot
@@ -1149,7 +1379,7 @@ function buildMonthlySummaryRows(
 
     const requestServicesByCurrency = new Map<
       string,
-      Map<string, { serviceName: string; usageCount: number; subtotal: number }>
+      Map<string, { serviceName: string; verificationOrigin: string; subtotal: number }>
     >();
 
     for (const service of normalizedServices) {
@@ -1158,37 +1388,58 @@ function buildMonthlySummaryRows(
       const matchedInvoiceRate =
         (serviceId ? invoiceRatesByServiceId.get(serviceId) : undefined) ??
         invoiceRatesByServiceName.get(serviceNameKey);
+      const companyAssignedService =
+        (serviceId ? companyServiceLookups.byServiceId.get(serviceId) : undefined) ??
+        companyServiceLookups.byServiceName.get(serviceNameKey);
+      const resolvedService = companyAssignedService ?? service;
       const usageCount =
         serviceId && selectedPackageServiceIds.has(serviceId)
           ? 1
           : resolveServiceUsageCount(service, serviceQuantities);
-
-      const currencyRaw = normalizeWhitespace(
-        matchedInvoiceRate?.currency ?? service.currency,
-      ).toUpperCase();
-      const currency = SUPPORTED_CURRENCY_SET.has(currencyRaw) ? currencyRaw : "INR";
-      const unitPrice = roundMoney(matchedInvoiceRate?.price ?? service.price);
-      const serviceSubtotal = roundMoney(unitPrice * usageCount);
       const resolvedServiceName =
-        matchedInvoiceRate?.serviceName ?? service.serviceName ?? "Service Not Available";
-      const serviceKey = serviceId || serviceNameKey || resolvedServiceName.toLowerCase();
+        normalizeServiceLabel(
+          matchedInvoiceRate?.serviceName ?? resolvedService.serviceName ?? "Service Not Available",
+        );
 
-      let currencyServices = requestServicesByCurrency.get(currency);
-      if (!currencyServices) {
-        currencyServices = new Map();
-        requestServicesByCurrency.set(currency, currencyServices);
-      }
+      for (let entryIndex = 0; entryIndex < usageCount; entryIndex += 1) {
+        const verificationOrigin = resolveServiceVerificationOrigin(
+          serviceId,
+          serviceNameKey,
+          entryIndex,
+          serviceCountrySelections,
+          requestCountryFallback,
+        );
+        const countryRate = resolveCountryRateForOrigin(
+          resolvedService,
+          verificationOrigin,
+        );
+        const currencyRaw = normalizeWhitespace(
+          countryRate?.currency ??
+            matchedInvoiceRate?.currency ??
+            resolvedService.currency,
+        ).toUpperCase();
+        const currency = SUPPORTED_CURRENCY_SET.has(currencyRaw) ? currencyRaw : "INR";
+        const unitPrice = roundMoney(
+          countryRate?.price ?? matchedInvoiceRate?.price ?? resolvedService.price,
+        );
 
-      const existingService = currencyServices.get(serviceKey);
-      if (existingService) {
-        existingService.usageCount += usageCount;
-        existingService.subtotal = roundMoney(existingService.subtotal + serviceSubtotal);
-      } else {
-        currencyServices.set(serviceKey, {
-          serviceName: resolvedServiceName,
-          usageCount,
-          subtotal: serviceSubtotal,
-        });
+        let currencyServices = requestServicesByCurrency.get(currency);
+        if (!currencyServices) {
+          currencyServices = new Map();
+          requestServicesByCurrency.set(currency, currencyServices);
+        }
+
+        const serviceKey = `${serviceId || serviceNameKey || resolvedServiceName.toLowerCase()}::entry-${entryIndex + 1}::${verificationOrigin.toLowerCase()}`;
+        const existingService = currencyServices.get(serviceKey);
+        if (existingService) {
+          existingService.subtotal = roundMoney(existingService.subtotal + unitPrice);
+        } else {
+          currencyServices.set(serviceKey, {
+            serviceName: resolvedServiceName,
+            verificationOrigin,
+            subtotal: unitPrice,
+          });
+        }
       }
     }
 
@@ -1203,6 +1454,10 @@ function buildMonthlySummaryRows(
       );
       const verificationServiceName = normalizeWhitespace(asString(verificationRecord.serviceName));
       const verificationServiceNameKey = verificationServiceName.toLowerCase();
+      const verificationServiceEntryIndex = Math.max(
+        1,
+        Math.floor(Number(verificationRecord.serviceEntryIndex) || 1),
+      );
       const attempts = Array.isArray(verificationRecord.attempts)
         ? verificationRecord.attempts
         : [];
@@ -1225,18 +1480,39 @@ function buildMonthlySummaryRows(
       const selectedService =
         (verificationServiceId ? selectedServicesById.get(verificationServiceId) : undefined) ??
         selectedServicesByName.get(verificationServiceNameKey);
+      const companyAssignedService =
+        (verificationServiceId
+          ? companyServiceLookups.byServiceId.get(verificationServiceId)
+          : undefined) ??
+        companyServiceLookups.byServiceName.get(verificationServiceNameKey);
+      const resolvedService = selectedService ?? companyAssignedService;
       const matchedInvoiceRate =
         (verificationServiceId ? invoiceRatesByServiceId.get(verificationServiceId) : undefined) ??
         invoiceRatesByServiceName.get(verificationServiceNameKey);
 
+      const verificationOrigin = resolveServiceVerificationOrigin(
+        verificationServiceId,
+        verificationServiceNameKey,
+        verificationServiceEntryIndex - 1,
+        serviceCountrySelections,
+        requestCountryFallback,
+      );
+      const countryRate = resolveCountryRateForOrigin(
+        resolvedService,
+        verificationOrigin,
+      );
+
       const resolvedBaseServiceName =
-        normalizeWhitespace(
+        normalizeServiceLabel(
           matchedInvoiceRate?.serviceName ??
-            selectedService?.serviceName ??
+            resolvedService?.serviceName ??
             verificationServiceName,
         ) || "Service Not Available";
       const currencyRaw = normalizeWhitespace(
-        (matchedInvoiceRate?.currency ?? selectedService?.currency ?? "INR") as string,
+        (countryRate?.currency ??
+          matchedInvoiceRate?.currency ??
+          resolvedService?.currency ??
+          "INR") as string,
       ).toUpperCase();
       const currency = SUPPORTED_CURRENCY_SET.has(currencyRaw) ? currencyRaw : "INR";
 
@@ -1246,7 +1522,7 @@ function buildMonthlySummaryRows(
         requestServicesByCurrency.set(currency, currencyServices);
       }
 
-      const extraServiceKey = `${verificationServiceId || verificationServiceNameKey || resolvedBaseServiceName.toLowerCase()}::extra`;
+      const extraServiceKey = `${verificationServiceId || verificationServiceNameKey || resolvedBaseServiceName.toLowerCase()}::extra::entry-${verificationServiceEntryIndex}::${verificationOrigin.toLowerCase()}`;
       const existingExtraService = currencyServices.get(extraServiceKey);
       if (existingExtraService) {
         existingExtraService.subtotal = roundMoney(
@@ -1255,7 +1531,7 @@ function buildMonthlySummaryRows(
       } else {
         currencyServices.set(extraServiceKey, {
           serviceName: `${resolvedBaseServiceName} (Extra Charges)`,
-          usageCount: 1,
+          verificationOrigin,
           subtotal: extraChargesSubtotal,
         });
       }
@@ -1266,50 +1542,51 @@ function buildMonthlySummaryRows(
     );
 
     for (const [currency, serviceEntries] of sortedCurrencyEntries) {
-      const services = [...serviceEntries.values()];
-      const serviceName = services
-        .map((entry) =>
-          entry.usageCount > 1
-            ? `${entry.serviceName} x${entry.usageCount}`
-            : entry.serviceName,
-        )
-        .join(", ");
-      const subtotal = roundMoney(services.reduce((sum, entry) => sum + entry.subtotal, 0));
-      const gstAmount = gstEnabled ? roundMoney((subtotal * normalizedRate) / 100) : 0;
-      const total = roundMoney(subtotal + gstAmount);
+      const services = [...serviceEntries.values()].sort((first, second) =>
+        first.serviceName.localeCompare(second.serviceName),
+      );
 
-      rows.push({
-        srNo,
-        requestedAt,
-        candidateName,
-        userName,
-        verifierName: verifierName || "-",
-        requestStatus,
-        serviceName,
-        currency: currency as InvoiceLineItem["currency"],
-        subtotal,
-        gstAmount,
-        total,
-      });
+      for (const serviceEntry of services) {
+        const serviceName = serviceEntry.serviceName;
+        const subtotal = roundMoney(serviceEntry.subtotal);
+        const gstAmount = gstEnabled
+          ? roundMoney((subtotal * normalizedRate) / 100)
+          : 0;
+        const total = roundMoney(subtotal + gstAmount);
 
-      const existing = totals.get(currency) ?? { subtotal: 0, gstAmount: 0, total: 0 };
-      existing.subtotal = roundMoney(existing.subtotal + subtotal);
-      existing.gstAmount = roundMoney(existing.gstAmount + gstAmount);
-      existing.total = roundMoney(existing.total + total);
-      totals.set(currency, existing);
+        rows.push({
+          srNo: currentSrNo,
+          requestedAt,
+          candidateName,
+          userName,
+          verifierName: verifierName || "-",
+          requestStatus,
+          serviceName,
+          verificationOrigin: serviceEntry.verificationOrigin,
+          currency: currency as InvoiceLineItem["currency"],
+          subtotal,
+          gstAmount,
+          total,
+        });
 
-      srNo += 1;
+        const existing = totals.get(currency) ?? { subtotal: 0, gstAmount: 0, total: 0 };
+        existing.subtotal = roundMoney(existing.subtotal + subtotal);
+        existing.gstAmount = roundMoney(existing.gstAmount + gstAmount);
+        existing.total = roundMoney(existing.total + total);
+        totals.set(currency, existing);
+      }
     }
 
     if (sortedCurrencyEntries.length === 0) {
       rows.push({
-        srNo,
+        srNo: currentSrNo,
         requestedAt,
         candidateName,
         userName,
         verifierName: verifierName || "-",
         requestStatus,
         serviceName: "Service Not Available",
+        verificationOrigin: requestCountryFallback,
         currency: "INR",
         subtotal: 0,
         gstAmount: 0,
@@ -1318,8 +1595,9 @@ function buildMonthlySummaryRows(
 
       const existing = totals.get("INR") ?? { subtotal: 0, gstAmount: 0, total: 0 };
       totals.set("INR", existing);
-      srNo += 1;
     }
+
+    srNo += 1;
   }
 
   const totalsByCurrency = [...totals.entries()]
@@ -1430,7 +1708,7 @@ export async function GET(req: NextRequest) {
       )
         .sort({ createdAt: 1 })
         .select(
-          "candidateName status createdBy createdByDelegate selectedServices invoiceSnapshot serviceVerifications.serviceId serviceVerifications.serviceName serviceVerifications.attempts.verifierName serviceVerifications.attempts.managerName serviceVerifications.attempts.attemptedAt serviceVerifications.attempts.extraPaymentDone serviceVerifications.attempts.extraPaymentAmount serviceVerifications.attempts.extraPaymentApprovalRequested serviceVerifications.attempts.extraPaymentApprovalStatus candidateFormResponses.serviceId candidateFormResponses.serviceName candidateFormResponses.serviceEntryCount createdAt reportMetadata.customerSharedAt reportMetadata.generatedAt",
+          "candidateName status verificationCountry createdBy createdByDelegate selectedServices invoiceSnapshot serviceVerifications.serviceId serviceVerifications.serviceName serviceVerifications.serviceEntryIndex serviceVerifications.attempts.verifierName serviceVerifications.attempts.managerName serviceVerifications.attempts.attemptedAt serviceVerifications.attempts.extraPaymentDone serviceVerifications.attempts.extraPaymentAmount serviceVerifications.attempts.extraPaymentApprovalRequested serviceVerifications.attempts.extraPaymentApprovalStatus candidateFormResponses.serviceId candidateFormResponses.serviceName candidateFormResponses.serviceEntryCount candidateFormResponses.answers.fieldKey candidateFormResponses.answers.question candidateFormResponses.answers.value candidateFormResponses.answers.repeatable candidateFormResponses.answers.notApplicable createdAt reportMetadata.customerSharedAt reportMetadata.generatedAt",
         )
         .populate({ path: "createdBy", select: "name" })
         .populate({ path: "createdByDelegate", select: "name" })
@@ -1461,6 +1739,7 @@ export async function GET(req: NextRequest) {
       gstRate,
       invoiceLineItems,
       packageRates,
+      customerRecord.selectedServices ?? [],
       normalizeWhitespace(asString(customerRecord.name)),
     );
 
